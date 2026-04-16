@@ -213,6 +213,24 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
 /* ── ADDTGT ── */
 .addtgt{font-size:11px;padding:4px 10px;border:1.5px dashed var(--g2);border-radius:5px;color:var(--g4);background:transparent;cursor:pointer;font-family:var(--f);white-space:nowrap;transition:all .15s}
 .addtgt:hover{border-color:var(--teal);color:var(--teal)}
+
+/* ── EXPOSURE PANEL ── */
+.exp-panel{background:var(--white);border:1px solid var(--g1);border-radius:var(--r);padding:14px;margin-bottom:10px}
+.exp-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--teal2);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.exp-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.exp-kpi{background:var(--teal5);border:1px solid var(--teal1);border-radius:6px;padding:8px 12px;min-width:90px}
+.exp-kl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--teal2);margin-bottom:3px}
+.exp-kv{font-size:18px;font-weight:600;color:var(--teal);line-height:1}
+.exp-ks{font-size:10px;color:var(--g4);margin-top:2px}
+.exp-chart{display:flex;align-items:flex-end;gap:3px;height:70px;padding:0 4px}
+.exp-bar-wrap{display:flex;flex-direction:column;align-items:center;flex:1;min-width:28px}
+.exp-bar{width:100%;border-radius:3px 3px 0 0;transition:height .3s;min-height:2px;position:relative;cursor:default}
+.exp-bar:hover::after{content:attr(data-tip);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:var(--teal);color:#fff;font-size:9px;padding:2px 5px;border-radius:3px;white-space:nowrap;margin-bottom:3px;font-family:var(--m)}
+.exp-bml{font-size:8px;color:var(--g4);margin-top:3px;text-align:center;white-space:nowrap}
+.exp-bmv{font-size:9px;font-weight:600;color:var(--teal);text-align:center}
+.exp-legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+.exp-leg{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--g4)}
+.exp-dot{width:10px;height:10px;border-radius:2px}
 </style>
 </head>
 <body>
@@ -338,6 +356,21 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
     </div>
   </div>
 
+
+  <div class="exp-panel" id="exp-panel">
+    <div class="exp-title">
+      <span>📊 Portfolio Exposure</span>
+      <span id="exp-subtitle" style="font-size:10px;font-weight:400;color:var(--g4)"></span>
+    </div>
+    <div class="exp-grid" id="exp-kpis"></div>
+    <div class="exp-chart" id="exp-chart"></div>
+    <div class="exp-legend">
+      <div class="exp-leg"><div class="exp-dot" style="background:#4A78B0"></div>Expires this month</div>
+      <div class="exp-leg"><div class="exp-dot" style="background:#CDA04B"></div>Target month</div>
+      <div class="exp-leg"><div class="exp-dot" style="background:#C44B3B"></div>MTM / Overdue</div>
+      <div class="exp-leg"><div class="exp-dot" style="background:#D0D8DC"></div>Future</div>
+    </div>
+  </div>
   <div class="twrap">
     <div class="tscr">
       <table><thead><tr id="tbl-hdr">
@@ -590,7 +623,8 @@ async function loadUnitsForEntity(entityKey){
     const allUnits = await getAllItems('NS_Units_Cache');
     rawUnits = allUnits.filter(item=>(item.fields.PropertyName||'')===s.ownerName);
   } else {
-    rawUnits = await getAllItems('NS_Units_Cache', `fields/OwnerName eq '${s.ownerName}'`);
+    const allUnitsSFR = await getAllItems('NS_Units_Cache');
+    rawUnits = allUnitsSFR.filter(item=>(item.fields.OwnerName||'')===s.ownerName);
   }
   hideLoading();
 
@@ -835,6 +869,74 @@ function addTarget(){
 function adjMTM(dir){const step=activeMTMType==='pct'?0.5:5;activeMTMPct=Math.round((activeMTMPct+dir*step)*10)/10;if(activeMTMPct<0)activeMTMPct=0;document.getElementById('rv-mtm').textContent=(activeMTMPct>=0?'+':'')+activeMTMPct.toFixed(1);renderTable();}
 function setMTMType(t){activeMTMType=t;activeMTMPct=t==='pct'?5.0:75;document.getElementById('mtt-p').classList.toggle('on',t==='pct');document.getElementById('mtt-d').classList.toggle('on',t==='dol');document.getElementById('rv-mtm').textContent=(activeMTMPct>=0?'+':'')+activeMTMPct.toFixed(1);renderTable();}
 
+
+// ── EXPOSURE PANEL ──────────────────────────────────────────
+function renderExposure(){
+  const units = activeUnits.filter(u=>u.st!=='vacant');
+  const total = units.length;
+  const mtm = units.filter(u=>u.st==='mtm').length;
+  const approved = units.filter(u=>u.status==='approved').length;
+  const sent = units.filter(u=>u.status==='sent').length;
+  const nr = units.filter(u=>u.status==='nr').length;
+  const pending = units.filter(u=>u.status==='pending'&&u.st!=='evict').length;
+
+  // Subtitle
+  const s = allSettings[currentEntity];
+  document.getElementById('exp-subtitle').textContent = s ? s.name : '';
+
+  // KPIs
+  document.getElementById('exp-kpis').innerHTML =
+    kpi('Total Units', total, '')+
+    kpi('Pending', pending, '', 'var(--wa)')+
+    kpi('Approved', approved, '', 'var(--ok)')+
+    kpi('Sent', sent, '', 'var(--inf)')+
+    kpi('Non-Renew', nr, '', 'var(--nr)')+
+    kpi('MTM', mtm, 'of '+total, mtm>0?'var(--er)':'var(--g4)');
+
+  // Build monthly expiration bars (next 15 months)
+  const today = new Date();
+  const months = [];
+  for(let i=-1;i<14;i++){
+    const d = new Date(today.getFullYear(), today.getMonth()+i, 1);
+    months.push({yr:d.getFullYear(), mo:d.getMonth()+1, label:MOS[d.getMonth()]+'\''+(d.getFullYear()%100)});
+  }
+
+  // Count expirations per month
+  const counts = {};
+  months.forEach(m=>{ counts[m.yr+'-'+m.mo]=0; });
+  units.forEach(u=>{
+    if(u.st==='mtm'||!u.leaseEndDate) return;
+    const k=u.ey+'-'+u.em;
+    if(counts[k]!==undefined) counts[k]++;
+  });
+
+  // Target months from settings
+  const targets = (s?.targets||[]).map(t=>t.yr+'-'+t.mo);
+  const currentMo = today.getFullYear()+'-'+(today.getMonth()+1);
+
+  const vals = months.map(m=>counts[m.yr+'-'+m.mo]||0);
+  const maxVal = Math.max(...vals, 1);
+
+  const chart = document.getElementById('exp-chart');
+  chart.innerHTML = months.map((m,i)=>{
+    const v = vals[i];
+    const k = m.yr+'-'+m.mo;
+    const isTarget = targets.includes(k);
+    const isCurrent = k===currentMo;
+    const color = isCurrent ? '#4A78B0' : isTarget ? '#CDA04B' : 'var(--g2)';
+    const h = Math.max(2, Math.round((v/maxVal)*60));
+    return \`<div class="exp-bar-wrap">
+      <div class="exp-bar" style="height:\${h}px;background:\${color}" data-tip="\${m.label}: \${v} units"></div>
+      <div class="exp-bml">\${m.label}</div>
+      <div class="exp-bmv">\${v>0?v:''}</div>
+    </div>\`;
+  }).join('');
+}
+
+function kpi(label, val, sub='', color='var(--teal)'){
+  return \`<div class="exp-kpi"><div class="exp-kl">\${label}</div><div class="exp-kv" style="color:\${color}">\${val}</div>\${sub?\`<div class="exp-ks">\${sub}</div>\`:''}</div>\`;
+}
+
 // ── FILTER / VISIBLE ──────────────────────────────────────────
 function getVisible(){
   const expF=document.getElementById('f-exp').value;
@@ -927,6 +1029,7 @@ function renderTable(){
     tbody.appendChild(tr);
   });
   updateMetrics();
+  renderExposure();
 }
 
 // ── STATUS ACTIONS ────────────────────────────────────────────
@@ -989,6 +1092,55 @@ function toggleMTMOnly(ri,el){
   saveDecision(ri);
 }
 
+
+// ── STAGGER EDITOR ──────────────────────────────────────────
+const MOS12 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function renderStaggerGrid(pcts){
+  const grid = document.getElementById('sett-stagger-grid');
+  if(!grid) return;
+  grid.innerHTML = MOS12.map((m,i)=>`
+    <div style="background:var(--teal5);border:1px solid var(--teal1);border-radius:6px;padding:8px">
+      <div style="font-size:10px;font-weight:600;color:var(--teal2);margin-bottom:4px">${m}</div>
+      <div style="display:flex;align-items:center;gap:4px">
+        <input type="number" id="stagger-${i}" value="${Math.round((pcts[i]||0.083)*1000)/10}"
+          min="0" max="100" step="0.5"
+          style="width:52px;font-family:var(--m);font-size:12px;padding:3px 5px;border:1px solid var(--g2);border-radius:4px;outline:none;text-align:right"
+          oninput="updateStaggerTotal()">
+        <span style="font-size:11px;color:var(--g4)">%</span>
+      </div>
+    </div>`).join('');
+  updateStaggerTotal();
+}
+
+function updateStaggerTotal(){
+  let total = 0;
+  for(let i=0;i<12;i++){
+    const el=document.getElementById('stagger-'+i);
+    if(el) total+=parseFloat(el.value)||0;
+  }
+  const el=document.getElementById('sett-stagger-total');
+  if(el){
+    el.textContent=Math.round(total*10)/10+'%';
+    el.style.color = Math.abs(total-100)<1 ? 'var(--ok)' : 'var(--er)';
+  }
+}
+
+function getStaggerFromForm(){
+  return Array.from({length:12},(_,i)=>{
+    const el=document.getElementById('stagger-'+i);
+    return Math.round((parseFloat(el?.value||8.3)/100)*10000)/10000;
+  });
+}
+
+function evenStagger(){
+  for(let i=0;i<12;i++){
+    const el=document.getElementById('stagger-'+i);
+    if(el) el.value='8.3';
+  }
+  updateStaggerTotal();
+}
+
 // ── SETTINGS TAB ──────────────────────────────────────────────
 function buildSettingsSelectors(){
   settMode='mf';
@@ -1019,6 +1171,7 @@ function loadSettingsForm(key){
   const s=allSettings[key];if(!s)return;
   document.getElementById('sett-notes-entity-name').textContent=s.name;
   document.getElementById('sett-notes-ta').value=s.notes||'';
+  renderStaggerGrid(s.staggerPcts||Array(12).fill(0.083));
   document.getElementById('sett-rr').value=s.renewalRate||60;
   document.getElementById('sett-ow').value=s.offerWindow||75;
   document.getElementById('sett-mg').value=s.mtmGoal||5;
@@ -1033,6 +1186,7 @@ async function saveEntitySettings(){
   const s=allSettings[settEntity];
   const fields={
     Notes:document.getElementById('sett-notes-ta').value,
+        StaggerPctsJSON:JSON.stringify(getStaggerFromForm()),
     RenewalRateAssumption:parseInt(document.getElementById('sett-rr').value)||60,
     OfferWindowDays:parseInt(document.getElementById('sett-ow').value)||75,
     MTMGoalPct:parseFloat(document.getElementById('sett-mg').value)||5,
@@ -1057,6 +1211,7 @@ async function saveEntitySettings(){
       await updateItem('NS_Renewal_Settings',s.spId,fields);
     }
     // Update local state
+    s.staggerPcts = getStaggerFromForm();
     Object.assign(s,{
       notes:fields.Notes,renewalRate:fields.RenewalRateAssumption,
       offerWindow:fields.OfferWindowDays,mtmGoal:fields.MTMGoalPct,mtmFlatFee:fields.MTMFlatFee
