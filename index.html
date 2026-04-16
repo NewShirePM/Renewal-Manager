@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NewShire — Renewal Manager</title>
 <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;500;600;700&family=Source+Code+Pro:wght@400;500&display=swap" rel="stylesheet">
-<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -437,7 +437,7 @@ async function login(){
     account = r.account;
     await loadApp();
   } catch(e){
-    document.getElementById('auth-err').textContent = "Sign-in failed. Please try again.";
+    const code=e.errorCode||"";const msg=e.message||String(e);document.getElementById('auth-err').textContent="Error: "+(code?code+": ":"")+msg.substring(0,200);console.error("MSAL login error",e);
   }
 }
 
@@ -1058,7 +1058,7 @@ let toastTimer;
 function showToast(msg,err=false){const t=document.getElementById('toast');t.textContent=msg;t.className='toast on'+(err?' err':'');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.className='toast',3000);}
 
 // ── INIT ──────────────────────────────────────────────────────
-initMSAL().catch(e=>{document.getElementById('auth-err').textContent='Init error: '+e.message;});
+if(typeof msal==="undefined"){document.getElementById("auth-err").textContent="Auth library failed to load. Check browser console (F12) for blocked scripts.";document.getElementById("login-wrap").classList.remove("hidden");}else{initMSAL().catch(e=>{document.getElementById('auth-err').textContent="Init error: "+e.message;console.error("MSAL init error",e);});}
 </script>
 </body>
 </html>
