@@ -421,6 +421,18 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
     <div class="sfrow"><span class="sfl">MTM goal (max % of units)</span><input class="sinp" id="sett-mg" type="number" value="5"><span style="font-size:11px;color:var(--g4)">%</span></div>
     <div class="sfrow"><span class="sfl">Standard MTM flat fee</span><span style="font-size:12px;color:var(--g4)">$</span><input class="sinp" id="sett-mtmfee" type="number" value="100"></div>
     <div class="sfrow" id="sett-units-row"><span class="sfl">Total unit count</span><input class="sinp" id="sett-tu" type="number" value="80"></div>
+
+  <div class="scard">
+    <div class="scth">
+      <span>Target Expiration % by Month</span>
+      <span style="font-size:10px;color:var(--g4);font-weight:400">% of portfolio expiring each month — used for stagger cap math</span>
+    </div>
+    <div id="sett-stagger-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px"></div>
+    <div style="font-size:10px;color:var(--g4);display:flex;align-items:center;gap:10px">
+      Total: <span id="sett-stagger-total" style="font-weight:600;color:var(--teal)">100%</span>
+      <button onclick="evenStagger()" style="font-size:10px;padding:2px 10px;border:1px solid var(--g2);border-radius:4px;background:var(--white);cursor:pointer;font-family:var(--f)">Even (8.3% each)</button>
+    </div>
+  </div>
   </div>
 </div>
 
