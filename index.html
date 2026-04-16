@@ -922,7 +922,7 @@ function renderExposure(){
   // Target = totalUnits * staggerPct for that month
   const stagger = s?.staggerPcts||Array(12).fill(0.083);
   const targets = months.map(m=>(stagger[m.moIdx]||0.083)*total);
-  const targetMonths = (s?.targets||[]).map(t=>t.yr+'-'+t.mo);
+  const targetMonths = activeTargets.map(t=>t.yr+'-'+t.mo);
 
   const vals = months.map(m=>counts[m.yr+'-'+m.mo]||0);
   const maxVal = Math.max(...vals, ...targets, 1);
