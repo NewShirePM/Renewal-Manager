@@ -596,7 +596,12 @@ async function loadUnitsForEntity(entityKey){
 
   // Load decisions for this entity in current cycle
   showLoading('Loading renewal decisions…');
-  const decItems = await getAllItems('NS_Renewal_Decisions', `fields/OwnerName eq '${s.ownerName}'`);
+  // Load all decisions and filter client-side (OwnerName not indexed on NS_Renewal_Decisions)
+  const allDecisions = await getAllItems('NS_Renewal_Decisions');
+  const decItems = allDecisions.filter(item =>
+    (item.fields.OwnerName||'') === s.ownerName &&
+    (item.fields.RenewalCycleYear||'') === CYCLE
+  );
   hideLoading();
   decisions = {};
   decItems.forEach(item=>{
