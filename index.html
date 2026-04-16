@@ -583,9 +583,15 @@ async function loadUnitsForEntity(entityKey){
   if(!s) return [];
   showLoading('Loading units…');
   const isMF = (s.portfolioType||'').toLowerCase().includes('multi');
-  const filterField = isMF ? 'PropertyName' : 'OwnerName';
-  const filter = `fields/${filterField} eq '${s.ownerName}'`;
-  const rawUnits = await getAllItems('NS_Units_Cache', filter);
+  // MF: load all units, filter client-side by PropertyName (avoids SP index requirement)
+  // SFR: filter server-side by OwnerName (indexed)
+  let rawUnits;
+  if(isMF){
+    const allUnits = await getAllItems('NS_Units_Cache');
+    rawUnits = allUnits.filter(item=>(item.fields.PropertyName||'')===s.ownerName);
+  } else {
+    rawUnits = await getAllItems('NS_Units_Cache', `fields/OwnerName eq '${s.ownerName}'`);
+  }
   hideLoading();
 
   // Load decisions for this entity in current cycle
