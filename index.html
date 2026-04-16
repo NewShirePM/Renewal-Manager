@@ -509,44 +509,150 @@ async function loadApp(){
   // User display
   document.getElementById('tb-user-name').textContent = account?.name?.split(' ')[0]||account?.username||'';
 
-  showLoading('Loading settings…');
+  showLoading("Loading settings…");
   try{
     await loadSettings();
+    const keys=Object.keys(allSettings);
+    if(keys.length===0){showToast('NS_Renewal_Settings loaded 0 rows. Check the list has data and EntityKey is populated.',true);}
+    else{console.log('Settings loaded:',keys.length,'entities:',keys.join(', '),JSON.stringify(allSettings));showToast('Loaded '+keys.length+' entities: '+keys.slice(0,4).join(', '));}
     hideLoading();
-    switchMode('mf');
+    switchMode("mf");
   } catch(e){
     hideLoading();
     showToast('Error loading settings: '+e.message, true);
   }
 }
 
-// ── LOAD SETTINGS (NS_Renewal_Settings) ──────────────────────
+// ── LOAD APP DATA — entities from Units Cache, config from Settings ──
+// Classification rule: a PropertyID with >= MF_THRESHOLD units = one MF building.
+// PropertyIDs with fewer units = SFR, grouped by OwnerName.
+const MF_THRESHOLD = 5;
+
 async function loadSettings(){
-  const items = await getAllItems('NS_Renewal_Settings');
-  allSettings = {};
-  items.forEach(item=>{
+  showLoading('Reading AppFolio unit data…');
+
+  // Pull all of NS_Units_Cache — just the fields needed for entity discovery
+  const unitItems = await getAllItems('NS_Units_Cache','','id,fields/OwnerName,fields/PropertyName,fields/PropertyID,fields/TotalMonthlyRent');
+
+  if(unitItems.length===0){
+    showToast('NS_Units_Cache is empty — Flow 1 must run before using this app.', true);
+    return;
+  }
+
+  // Count units per PropertyID
+  const byPropId = {};
+  unitItems.forEach(item=>{
     const f = item.fields;
-    const key = f.EntityKey;
-    if(!key) return;
-    allSettings[key] = {
+    const pid   = String(f.PropertyID||'').trim();
+    const owner = (f.OwnerName||'').trim();
+    const pname = (f.PropertyName||'').trim();
+    if(!pid) return;
+    if(!byPropId[pid]) byPropId[pid]={pid, pname, owner, count:0};
+    byPropId[pid].count++;
+  });
+
+  // Classify: >= MF_THRESHOLD = MF building; < = SFR row
+  const entityMap = {};
+  const sfrOwners = {};
+
+  Object.values(byPropId).forEach(p=>{
+    if(p.count >= MF_THRESHOLD){
+      // MF — one entity per PropertyID
+      const key = 'prop-'+p.pid;
+      entityMap[key] = {
+        portfolioType:'Multi-Family',
+        name: p.pname||('Property '+p.pid),
+        ownerName: p.owner,
+        filterBy:'PropertyID',
+        filterValue: p.pid,
+        unitCount: p.count,
+      };
+    } else {
+      // SFR — accumulate under owner
+      if(!p.owner) return;
+      const okey = 'sfr-'+slugify(p.owner);
+      if(!sfrOwners[okey]){
+        sfrOwners[okey]={
+          portfolioType:'Single-Family',
+          name: p.owner,
+          ownerName: p.owner,
+          filterBy:'OwnerName',
+          filterValue: p.owner,
+          unitCount:0,
+        };
+      }
+      sfrOwners[okey].unitCount += p.count;
+    }
+  });
+
+  Object.assign(entityMap, sfrOwners);
+
+  const mfCount  = Object.values(entityMap).filter(e=>e.portfolioType==='Multi-Family').length;
+  const sfrCount = Object.values(entityMap).filter(e=>e.portfolioType==='Single-Family').length;
+  console.log('Entities discovered — MF:'+mfCount+' SFR:'+sfrCount, entityMap);
+
+  // Load saved config from NS_Renewal_Settings (may be empty — that's OK)
+  showLoading('Loading renewal configuration…');
+  const cfgItems = await getAllItems('NS_Renewal_Settings');
+  const cfgMap = {}; // keyed by EntityKey
+  cfgItems.forEach(item=>{
+    const f = item.fields;
+    const ek = (f.EntityKey||'').trim();
+    if(ek) cfgMap[ek]={
       spId: item.id,
-      name: f.EntityName||f.Title||key,
-      ownerName: f.OwnerName||'',
-      portfolioType: f.PortfolioType||'Multi-Family',
-      targets: safeJSON(f.TargetMonthsJSON, []),
-      mtmIncreaseType: f.MTMIncreaseType||'Percent',
+      targets:     safeJSON(f.TargetMonthsJSON,[]),
+      mtmIncreaseType:  f.MTMIncreaseType||'Percent',
       mtmIncreaseValue: parseFloat(f.MTMIncreaseValue)||5,
-      mtmFlatFee: parseFloat(f.MTMFlatFee)||100,
-      mtmGoal: parseFloat(f.MTMGoalPct)||5,
+      mtmFlatFee:  parseFloat(f.MTMFlatFee)||100,
+      mtmGoal:     parseFloat(f.MTMGoalPct)||5,
       offerWindow: parseInt(f.OfferWindowDays)||75,
       renewalRate: parseInt(f.RenewalRateAssumption)||60,
-      totalUnits: parseInt(f.TotalUnits)||0,
-      staggerPcts: safeJSON(f.StaggerPctsJSON, Array(12).fill(0.083)),
-      amiRates: safeJSON(f.AMIRatesJSON, {}),
-      notes: f.Notes||'',
+      staggerPcts: safeJSON(f.StaggerPctsJSON,Array(12).fill(0.083)),
+      amiRates:    safeJSON(f.AMIRatesJSON,{}),
+      notes:       f.Notes||'',
     };
   });
+
+  // Merge: entity list from cache + config from settings (defaults if no row yet)
+  allSettings = {};
+  Object.entries(entityMap).forEach(([key,entity])=>{
+    const cfg = cfgMap[key]||{};
+    const isMF = entity.portfolioType==='Multi-Family';
+    const defaultTargets = isMF
+      ? [{mo:5,yr:2026,type:'pct',val:2.5,used:0},{mo:6,yr:2026,type:'pct',val:2.5,used:0}]
+      : [{mo:6,yr:2026,type:'pct',val:3.0,used:0}];
+    allSettings[key]={
+      spId:        cfg.spId||null,
+      entityKey:   key,
+      name:        entity.name,
+      ownerName:   entity.ownerName,
+      portfolioType: entity.portfolioType,
+      filterBy:    entity.filterBy,
+      filterValue: entity.filterValue,
+      targets:     (cfg.targets&&cfg.targets.length>0)?cfg.targets:defaultTargets,
+      mtmIncreaseType:  cfg.mtmIncreaseType||'Percent',
+      mtmIncreaseValue: cfg.mtmIncreaseValue!=null?cfg.mtmIncreaseValue:5,
+      mtmFlatFee:  cfg.mtmFlatFee!=null?cfg.mtmFlatFee:100,
+      mtmGoal:     cfg.mtmGoal!=null?cfg.mtmGoal:5,
+      offerWindow: cfg.offerWindow||75,
+      renewalRate: cfg.renewalRate||60,
+      totalUnits:  entity.unitCount,
+      staggerPcts: cfg.staggerPcts||Array(12).fill(0.083),
+      amiRates:    cfg.amiRates||{},
+      notes:       cfg.notes||''
+    };
+  });
+
+  showToast('Loaded '+mfCount+' MF properties · '+sfrCount+' SFR owners');
   buildSettingsSelectors();
+}
+
+function slugify(str){
+  return (str||'')    .toLowerCase()    .replace(/[^a-z0-9]+/g,'-')    .replace(/^-|-$/g,'')    .substring(0,50)||'entity';
+}
+
+function slugify(str){
+  return (str||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').substring(0,50)||'entity';
 }
 
 // ── LOAD UNITS (NS_Units_Cache) ────────────────────────────────
@@ -554,7 +660,9 @@ async function loadUnitsForEntity(entityKey){
   const s = allSettings[entityKey];
   if(!s) return [];
   showLoading('Loading units…');
-  const filter = `fields/OwnerName eq '${s.ownerName}'`;
+  const filterField = s.filterField||'OwnerName';
+  const filterValue = s.ownerName||'';
+  const filter = `fields/${filterField} eq '${filterValue}'`;
   const rawUnits = await getAllItems('NS_Units_Cache', filter);
   hideLoading();
 
@@ -639,8 +747,8 @@ function calcExpMonth(leaseEnd, isMTM, leaseStatus){
 }
 
 // ── MODE SWITCHING ────────────────────────────────────────────
-function getMFKeys(){ return Object.keys(allSettings).filter(k=>allSettings[k].portfolioType==='Multi-Family'); }
-function getSFRKeys(){ return Object.keys(allSettings).filter(k=>allSettings[k].portfolioType==='Single-Family'); }
+function getMFKeys(){ return Object.keys(allSettings).filter(k=>{const p=(allSettings[k].portfolioType||'').toLowerCase();return p.includes('multi')||p==='mf';}); }
+function getSFRKeys(){ return Object.keys(allSettings).filter(k=>{const p=(allSettings[k].portfolioType||'').toLowerCase();return p.includes('single')||p==='sfr'||p==='sfh';}); }
 
 async function switchMode(mode){
   currentMode = mode;
@@ -1003,7 +1111,18 @@ async function saveEntitySettings(){
 
   showLoading('Saving settings…');
   try{
-    await updateItem('NS_Renewal_Settings',s.spId,fields);
+    if(!s.spId){
+      // No settings row yet — create it now
+      fields.EntityKey = s.entityKey||settEntity;
+      fields.EntityName = s.name;
+      fields.OwnerName = s.ownerName;
+      fields.PortfolioType = s.portfolioType;
+      fields.Title = s.ownerName;
+      const newItem = await createItem('NS_Renewal_Settings', fields);
+      s.spId = newItem.id;
+    } else {
+      await updateItem('NS_Renewal_Settings',s.spId,fields);
+    }
     // Update local state
     Object.assign(s,{
       notes:fields.Notes,renewalRate:fields.RenewalRateAssumption,
