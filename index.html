@@ -222,12 +222,9 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
 .exp-kl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--teal2);margin-bottom:3px}
 .exp-kv{font-size:18px;font-weight:600;color:var(--teal);line-height:1}
 .exp-ks{font-size:10px;color:var(--g4);margin-top:2px}
-.exp-chart{display:flex;align-items:flex-end;gap:3px;height:70px;padding:0 4px}
-.exp-bar-wrap{display:flex;flex-direction:column;align-items:center;flex:1;min-width:28px}
-.exp-bar{width:100%;border-radius:3px 3px 0 0;transition:height .3s;min-height:2px;position:relative;cursor:default}
-.exp-bar:hover::after{content:attr(data-tip);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:var(--teal);color:#fff;font-size:9px;padding:2px 5px;border-radius:3px;white-space:nowrap;margin-bottom:3px;font-family:var(--m)}
-.exp-bml{font-size:8px;color:var(--g4);margin-top:3px;text-align:center;white-space:nowrap}
-.exp-bmv{font-size:9px;font-weight:600;color:var(--teal);text-align:center}
+.exp-chart{width:100%;overflow:hidden}
+
+
 .exp-legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
 .exp-leg{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--g4)}
 .exp-dot{width:10px;height:10px;border-radius:2px}
@@ -884,36 +881,36 @@ function setMTMType(t){activeMTMType=t;activeMTMPct=t==='pct'?5.0:75;document.ge
 
 // ── EXPOSURE PANEL ──────────────────────────────────────────
 function renderExposure(){
+  const s = allSettings[currentEntity];
   const units = activeUnits.filter(u=>u.st!=='vacant');
   const total = units.length;
-  const mtm = units.filter(u=>u.st==='mtm').length;
+  if(!total){ document.getElementById('exp-panel').style.display='none'; return; }
+  document.getElementById('exp-panel').style.display='';
+
+  const mtm      = units.filter(u=>u.st==='mtm').length;
   const approved = units.filter(u=>u.status==='approved').length;
-  const sent = units.filter(u=>u.status==='sent').length;
-  const nr = units.filter(u=>u.status==='nr').length;
-  const pending = units.filter(u=>u.status==='pending'&&u.st!=='evict').length;
+  const sent     = units.filter(u=>u.status==='sent').length;
+  const nr       = units.filter(u=>u.status==='nr').length;
+  const pending  = units.filter(u=>u.status==='pending'&&u.st!=='evict').length;
 
-  // Subtitle
-  const s = allSettings[currentEntity];
   document.getElementById('exp-subtitle').textContent = s ? s.name : '';
-
-  // KPIs
   document.getElementById('exp-kpis').innerHTML =
-    kpi('Total Units', total, '')+
-    kpi('Pending', pending, '', 'var(--wa)')+
-    kpi('Approved', approved, '', 'var(--ok)')+
-    kpi('Sent', sent, '', 'var(--inf)')+
-    kpi('Non-Renew', nr, '', 'var(--nr)')+
-    kpi('MTM', mtm, 'of '+total, mtm>0?'var(--er)':'var(--g4)');
+    kpi('Total Units',total,'')+
+    kpi('Pending',pending,'',pending>0?'var(--wa)':'var(--g4)')+
+    kpi('Approved',approved,'','var(--ok)')+
+    kpi('Sent',sent,'','var(--inf)')+
+    kpi('Non-Renew',nr,'','var(--nr)')+
+    kpi('MTM',mtm,'of '+total,mtm>0?'var(--er)':'var(--g4)');
 
-  // Build monthly expiration bars (next 15 months)
+  // Build 14 months starting from current
   const today = new Date();
   const months = [];
-  for(let i=-1;i<14;i++){
+  for(let i=0;i<14;i++){
     const d = new Date(today.getFullYear(), today.getMonth()+i, 1);
-    months.push({yr:d.getFullYear(), mo:d.getMonth()+1, label:MOS[d.getMonth()]+'\''+(d.getFullYear()%100)});
+    months.push({yr:d.getFullYear(), mo:d.getMonth()+1, label:MOS[d.getMonth()]+"'"+(d.getFullYear()%100), moIdx:d.getMonth()});
   }
 
-  // Count expirations per month
+  // Count actual expirations per month
   const counts = {};
   months.forEach(m=>{ counts[m.yr+'-'+m.mo]=0; });
   units.forEach(u=>{
@@ -922,32 +919,86 @@ function renderExposure(){
     if(counts[k]!==undefined) counts[k]++;
   });
 
-  // Target months from settings
-  const targets = (s?.targets||[]).map(t=>t.yr+'-'+t.mo);
-  const currentMo = today.getFullYear()+'-'+(today.getMonth()+1);
+  // Target = totalUnits * staggerPct for that month
+  const stagger = s?.staggerPcts||Array(12).fill(0.083);
+  const targets = months.map(m=>(stagger[m.moIdx]||0.083)*total);
+  const targetMonths = (s?.targets||[]).map(t=>t.yr+'-'+t.mo);
 
   const vals = months.map(m=>counts[m.yr+'-'+m.mo]||0);
-  const maxVal = Math.max(...vals, 1);
+  const maxVal = Math.max(...vals, ...targets, 1);
 
-  const chart = document.getElementById('exp-chart');
-  chart.innerHTML = months.map((m,i)=>{
-    const v = vals[i];
-    const k = m.yr+'-'+m.mo;
-    const isTarget = targets.includes(k);
-    const isCurrent = k===currentMo;
-    const color = isCurrent ? '#4A78B0' : isTarget ? '#CDA04B' : 'var(--g2)';
-    const h = Math.max(2, Math.round((v/maxVal)*60));
-    return `<div class="exp-bar-wrap">
-      <div class="exp-bar" style="height:${h}px;background:${color}" data-tip="${m.label}: ${v} units"></div>
-      <div class="exp-bml">${m.label}</div>
-      <div class="exp-bmv">${v>0?v:''}</div>
-    </div>`;
+  // SVG chart
+  const W=700, H=120, padL=32, padR=8, padT=12, padB=36;
+  const chartW=W-padL-padR, chartH=H-padT-padB;
+  const barW=Math.floor(chartW/months.length)-3;
+  const barGap=3;
+
+  // Y scale
+  const yScale=v=>chartH - Math.round((v/maxVal)*chartH);
+
+  // Target line points
+  const linePoints = months.map((m,i)=>{
+    const x = padL + i*(barW+barGap) + barW/2;
+    const y = padT + yScale(targets[i]);
+    return `${x},${y}`;
+  }).join(' ');
+
+  // Bars
+  const bars = months.map((m,i)=>{
+    const v=vals[i];
+    const t=targets[i];
+    const isTargetMo = targetMonths.includes(m.yr+'-'+m.mo);
+    const isCurrent = (m.yr===today.getFullYear()&&m.mo===today.getMonth()+1);
+    const fill = isCurrent?'#4A78B0':isTargetMo?'#CDA04B':'#D0D8DC';
+    const x=padL+i*(barW+barGap);
+    const barH=Math.max(2,Math.round((v/maxVal)*chartH));
+    const y=padT+chartH-barH;
+    const gap=Math.ceil(t-v);
+    const gapTxt=gap>0?`+${gap} needed`:(gap<0?`${Math.abs(gap)} over`:'✓');
+    const gapCol=gap>0?'#C44B3B':gap<0?'#2D8A5A':'#2D8A5A';
+    return `
+      <rect x="${x}" y="${y}" width="${barW}" height="${barH}" fill="${fill}" rx="2">
+        <title>${m.label}: ${v} actual / ${Math.round(t)} target${gap>0?' ('+gap+' needed)':gap<0?' ('+(Math.abs(gap))+' over)':' (on target)'}</title>
+      </rect>
+      <text x="${x+barW/2}" y="${H-padB+13}" text-anchor="middle" font-size="9" fill="#7A8585">${m.label}</text>
+      <text x="${x+barW/2}" y="${H-padB+24}" text-anchor="middle" font-size="8" fill="${gapCol}" font-weight="600">${gapTxt}</text>
+      ${v>0?`<text x="${x+barW/2}" y="${y-3}" text-anchor="middle" font-size="9" fill="#28434C" font-weight="600">${v}</text>`:''}
+    `;
   }).join('');
+
+  // Y axis ticks
+  const yTicks = [0, Math.round(maxVal/2), Math.round(maxVal)].map(v=>{
+    const y=padT+yScale(v);
+    return `<text x="${padL-3}" y="${y+3}" text-anchor="end" font-size="8" fill="#A8B0B0">${v}</text>
+            <line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#E8EAEA" stroke-width="1"/>`;
+  }).join('');
+
+  const svgChart = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px">
+    ${yTicks}
+    ${bars}
+    <polyline points="${linePoints}" fill="none" stroke="#9E7B2F" stroke-width="2" stroke-dasharray="5,3"/>
+    ${months.map((m,i)=>{
+      const x=padL+i*(barW+barGap)+barW/2;
+      const y=padT+yScale(targets[i]);
+      return `<circle cx="${x}" cy="${y}" r="3" fill="#CDA04B" stroke="#9E7B2F" stroke-width="1"/>`;
+    }).join('')}
+  </svg>`;
+
+  document.getElementById('exp-chart').innerHTML = svgChart;
+
+  // Updated legend
+  document.getElementById('exp-legend').innerHTML = `
+    <div class="exp-leg"><div class="exp-dot" style="background:#4A78B0"></div>Current month</div>
+    <div class="exp-leg"><div class="exp-dot" style="background:#CDA04B"></div>Target offer months</div>
+    <div class="exp-leg"><div class="exp-dot" style="background:#D0D8DC"></div>Future months</div>
+    <div class="exp-leg" style="gap:6px"><svg width="20" height="10"><polyline points="0,5 20,5" stroke="#9E7B2F" stroke-width="2" stroke-dasharray="4,2"/></svg>Target # (stagger)</div>
+  `;
 }
 
-function kpi(label, val, sub='', color='var(--teal)'){
+function kpi(label,val,sub='',color='var(--teal)'){
   return `<div class="exp-kpi"><div class="exp-kl">${label}</div><div class="exp-kv" style="color:${color}">${val}</div>${sub?`<div class="exp-ks">${sub}</div>`:''}</div>`;
 }
+
 
 // ── FILTER / VISIBLE ──────────────────────────────────────────
 function getVisible(){
