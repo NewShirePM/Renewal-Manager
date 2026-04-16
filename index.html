@@ -925,16 +925,16 @@ function renderExposure(){
     const isCurrent = k===currentMo;
     const color = isCurrent ? '#4A78B0' : isTarget ? '#CDA04B' : 'var(--g2)';
     const h = Math.max(2, Math.round((v/maxVal)*60));
-    return \`<div class="exp-bar-wrap">
-      <div class="exp-bar" style="height:\${h}px;background:\${color}" data-tip="\${m.label}: \${v} units"></div>
-      <div class="exp-bml">\${m.label}</div>
-      <div class="exp-bmv">\${v>0?v:''}</div>
-    </div>\`;
+    return `<div class="exp-bar-wrap">
+      <div class="exp-bar" style="height:${h}px;background:${color}" data-tip="${m.label}: ${v} units"></div>
+      <div class="exp-bml">${m.label}</div>
+      <div class="exp-bmv">${v>0?v:''}</div>
+    </div>`;
   }).join('');
 }
 
 function kpi(label, val, sub='', color='var(--teal)'){
-  return \`<div class="exp-kpi"><div class="exp-kl">\${label}</div><div class="exp-kv" style="color:\${color}">\${val}</div>\${sub?\`<div class="exp-ks">\${sub}</div>\`:''}</div>\`;
+  return `<div class="exp-kpi"><div class="exp-kl">${label}</div><div class="exp-kv" style="color:${color}">${val}</div>${sub?`<div class="exp-ks">${sub}</div>`:''}</div>`;
 }
 
 // ── FILTER / VISIBLE ──────────────────────────────────────────
