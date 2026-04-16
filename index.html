@@ -86,7 +86,7 @@ body{font-family:var(--f);background:var(--page);color:var(--teal);font-size:13p
 .tgg{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
 .tg2{display:flex;align-items:center;gap:4px;background:var(--teal5);border:1px solid var(--teal1);border-radius:var(--r);padding:5px 8px}
 .tmo{font-family:var(--f);font-size:11px;font-weight:600;padding:2px 4px;border:none;background:transparent;color:var(--teal);cursor:pointer;outline:none}
-.tyr{font-family:var(--m);font-size:11px;width:38px;border:none;border-left:1px solid var(--g2);background:transparent;color:var(--teal);text-align:center;outline:none;padding:2px 4px}
+.tyr{font-family:var(--m);font-size:11px;width:52px;border:none;border-left:1px solid var(--g2);background:transparent;color:var(--teal);text-align:center;outline:none;padding:2px 4px}
 .ttog{display:flex;border:1px solid var(--g2);border-radius:4px;overflow:hidden;margin:0 2px}
 .tt{font-size:10px;font-weight:600;padding:2px 6px;background:var(--white);color:var(--g4);cursor:pointer;border:none;font-family:var(--f);transition:all .1s}
 .tt.on{background:var(--hdr);color:#fff}
@@ -309,7 +309,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
           <div style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--nr);margin-bottom:4px">Standard MTM fee <span style="font-size:8px;font-weight:400;color:var(--g3)">(all other units)</span></div>
           <div style="display:flex;align-items:center;gap:5px">
             <span style="font-size:12px;color:var(--g4);font-weight:500">+$</span>
-            <input type="number" id="mtm-flat" value="100" min="0" step="5" style="width:60px;font-family:var(--m);font-size:12px;padding:3px 6px;border:1px solid var(--g2);border-radius:5px;background:var(--white);outline:none;text-align:right" onchange="activeMTMFlatFee=parseFloat(this.value)||0;renderTable()">
+            <input type="number" id="mtm-flat" value="100" min="0" step="5" style="width:60px;font-family:var(--m);font-size:12px;padding:3px 6px;border:1px solid var(--g2);border-radius:5px;background:var(--white);outline:none;text-align:right" onchange="activeMTMFlatFee=parseFloat(this.value)||0;renderTable();autoSaveTargets()">
             <span style="font-size:10px;color:var(--g3)">added</span>
           </div>
         </div>
@@ -856,7 +856,7 @@ function renderTargetGroups(){
     const avail=(cap)-(t.used||0);
     const sc=avail<=1?'spf':avail<=3?'spw':'spo';
     const d=document.createElement('div');d.className='tg2';
-    d.innerHTML=`<select class="tmo" onchange="activeTargets[${i}].mo=parseInt(this.value);renderTable()">${MOS.map((m,mi)=>`<option value="${mi+1}"${t.mo===(mi+1)?' selected':''}>${m}</option>`).join('')}</select>`+
+    d.innerHTML=`<select class="tmo" onchange="activeTargets[${i}].mo=parseInt(this.value);renderTable();autoSaveTargets()">${MOS.map((m,mi)=>`<option value="${mi+1}"${t.mo===(mi+1)?' selected':''}>${m}</option>`).join('')}</select>`+
       `<input class="tyr" type="number" value="${t.yr}" min="2025" max="2035" onchange="activeTargets[${i}].yr=parseInt(this.value)||2027;renderTable()">`+
       `<div class="ttog"><button class="tt${t.type==='pct'?' on':''}" onclick="setTT(${i},'pct')">%</button><button class="tt${t.type==='dol'?' on':''}" onclick="setTT(${i},'dol')">$</button></div>`+
       `<button class="ab" onclick="adjRate(${i},-1)">−</button><div class="rd" id="rv${i}">${t.val>=0?'+':''}${t.val.toFixed(1)}</div><button class="ab" onclick="adjRate(${i},1)">+</button>`+
@@ -864,19 +864,19 @@ function renderTargetGroups(){
     el.appendChild(d);
   });
 }
-function setTT(i,t){activeTargets[i].type=t;activeTargets[i].val=t==='pct'?2.5:50;renderTargetGroups();renderTable();}
-function adjRate(i,dir){const s=activeTargets[i].type==='pct'?0.5:5;activeTargets[i].val=Math.round((activeTargets[i].val+dir*s)*10)/10;if(activeTargets[i].val<0)activeTargets[i].val=0;renderTargetGroups();renderTable();}
-function removeTgt(i){if(activeTargets.length<=1)return;activeTargets.splice(i,1);renderTargetGroups();renderTable();}
+function setTT(i,t){activeTargets[i].type=t;activeTargets[i].val=t==='pct'?2.5:50;renderTargetGroups();renderTable();autoSaveTargets();}
+function adjRate(i,dir){const s=activeTargets[i].type==='pct'?0.5:5;activeTargets[i].val=Math.round((activeTargets[i].val+dir*s)*10)/10;if(activeTargets[i].val<0)activeTargets[i].val=0;renderTargetGroups();renderTable();autoSaveTargets();}
+function removeTgt(i){if(activeTargets.length<=1)return;activeTargets.splice(i,1);renderTargetGroups();renderTable();autoSaveTargets();}
 function addTarget(){
   const mo=parseInt(document.getElementById('new-mo').value),yr=parseInt(document.getElementById('new-yr').value)||2027,val=parseFloat(document.getElementById('new-r').value)||0;
   if(activeTargets.some(t=>t.mo===mo&&t.yr===yr)){showToast(MOS[mo-1]+' '+yr+' already exists.');return;}
   const s=allSettings[currentEntity],tu=s?.totalUnits||80,pcts=s?.staggerPcts||Array(12).fill(0.083);
   activeTargets.push({mo,yr,type:nType,val,used:0,cap:Math.round(tu*(pcts[mo-1]||0.083))});
   activeTargets.sort((a,b)=>a.yr!==b.yr?a.yr-b.yr:a.mo-b.mo);
-  renderTargetGroups();renderTable();
+  renderTargetGroups();renderTable();autoSaveTargets();
 }
-function adjMTM(dir){const step=activeMTMType==='pct'?0.5:5;activeMTMPct=Math.round((activeMTMPct+dir*step)*10)/10;if(activeMTMPct<0)activeMTMPct=0;document.getElementById('rv-mtm').textContent=(activeMTMPct>=0?'+':'')+activeMTMPct.toFixed(1);renderTable();}
-function setMTMType(t){activeMTMType=t;activeMTMPct=t==='pct'?5.0:75;document.getElementById('mtt-p').classList.toggle('on',t==='pct');document.getElementById('mtt-d').classList.toggle('on',t==='dol');document.getElementById('rv-mtm').textContent=(activeMTMPct>=0?'+':'')+activeMTMPct.toFixed(1);renderTable();}
+function adjMTM(dir){const step=activeMTMType==='pct'?0.5:5;activeMTMPct=Math.round((activeMTMPct+dir*step)*10)/10;if(activeMTMPct<0)activeMTMPct=0;document.getElementById('rv-mtm').textContent=(activeMTMPct>=0?'+':'')+activeMTMPct.toFixed(1);renderTable();autoSaveTargets();}
+function setMTMType(t){activeMTMType=t;activeMTMPct=t==='pct'?5.0:75;document.getElementById('mtt-p').classList.toggle('on',t==='pct');document.getElementById('mtt-d').classList.toggle('on',t==='dol');document.getElementById('rv-mtm').textContent=(activeMTMPct>=0?'+':'')+activeMTMPct.toFixed(1);renderTable();autoSaveTargets();}
 
 
 // ── EXPOSURE PANEL ──────────────────────────────────────────
@@ -1113,7 +1113,7 @@ async function saveDecision(ri){
   const fields={
     UnitID:uid,
     PropertyName:u.propertyName,
-    OwnerName:u.ownerName,
+    OwnerName:allSettings[currentEntity]?.ownerName||u.ownerName,
     UnitNumber:u.u,
     ResidentName:u.n,
     RenewalCycleYear:CYCLE,
@@ -1321,6 +1321,31 @@ function showTab(id,tab){
 }
 
 // ── HELPERS ───────────────────────────────────────────────────
+
+// ── AUTO-SAVE TARGETS ─────────────────────────────────────────
+let _targetSaveTimer = null;
+function autoSaveTargets(){
+  clearTimeout(_targetSaveTimer);
+  _targetSaveTimer = setTimeout(async()=>{
+    const s = allSettings[currentEntity];
+    if(!s||!s.spId) return;
+    try{
+      await updateItem('NS_Renewal_Settings', s.spId, {
+        TargetMonthsJSON: JSON.stringify(activeTargets),
+        MTMIncreaseType:  activeMTMType==='pct'?'Percent':'Dollar',
+        MTMIncreaseValue: activeMTMPct,
+        MTMFlatFee:       activeMTMFlatFee,
+      });
+      // Update local settings so reload picks up latest
+      s.targets         = JSON.parse(JSON.stringify(activeTargets));
+      s.mtmIncreaseType = activeMTMType==='pct'?'Percent':'Dollar';
+      s.mtmIncreaseValue= activeMTMPct;
+      s.mtmFlatFee      = activeMTMFlatFee;
+      showToast('Targets saved.');
+    } catch(e){ showToast('Auto-save failed: '+e.message, true); }
+  }, 800);
+}
+
 function safeJSON(str,fallback){try{return str?JSON.parse(str):fallback;}catch{return fallback;}}
 function showLoading(txt='Loading…'){document.getElementById('loading-txt').textContent=txt;document.getElementById('loading-overlay').style.display='flex';}
 function hideLoading(){document.getElementById('loading-overlay').style.display='none';}
