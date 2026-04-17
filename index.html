@@ -673,10 +673,22 @@ async function loadUnitsForEntity(entityKey){
       spId: item.id,
       u: f.UnitNumber||f.PropertyName||uid,
       n: f.ResidentName||'Vacant',
-      leaseEndDate: leaseEnd,
-      ey: leaseEnd ? parseInt(leaseEnd.substring(0,4)) : 0,
-      em: leaseEnd ? parseInt(leaseEnd.substring(5,7)) : 0,
-      ed: leaseEnd ? parseInt(leaseEnd.substring(8,10)) : 0,
+      // S8 units: use EligibleForRentIncreaseOn as the effective expiration date
+      leaseEndDate: (!!f.HasS8Charge && f.EligibleForRentIncreaseOn)
+        ? f.EligibleForRentIncreaseOn.substring(0,10)
+        : leaseEnd,
+      ey: (() => {
+        const d = (!!f.HasS8Charge && f.EligibleForRentIncreaseOn) ? f.EligibleForRentIncreaseOn.substring(0,10) : leaseEnd;
+        return d ? parseInt(d.substring(0,4)) : 0;
+      })(),
+      em: (() => {
+        const d = (!!f.HasS8Charge && f.EligibleForRentIncreaseOn) ? f.EligibleForRentIncreaseOn.substring(0,10) : leaseEnd;
+        return d ? parseInt(d.substring(5,7)) : 0;
+      })(),
+      ed: (() => {
+        const d = (!!f.HasS8Charge && f.EligibleForRentIncreaseOn) ? f.EligibleForRentIncreaseOn.substring(0,10) : leaseEnd;
+        return d ? parseInt(d.substring(8,10)) : 0;
+      })(),
       mkt: parseFloat(f.TotalMonthlyRent)||0,
       curr: parseFloat(f.TotalMonthlyRent)||0,
       st: mapLeaseStatus(f.LeaseStatus, f.IsMTM),
