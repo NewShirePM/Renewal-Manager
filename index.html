@@ -222,7 +222,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
 .exp-kl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--teal2);margin-bottom:3px}
 .exp-kv{font-size:18px;font-weight:600;color:var(--teal);line-height:1}
 .exp-ks{font-size:10px;color:var(--g4);margin-top:2px}
-.exp-chart{width:100%;overflow:hidden}
+.exp-chart{width:100%;overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch}
 
 
 .exp-legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
@@ -928,7 +928,7 @@ function renderExposure(){
   const maxVal = Math.max(...vals, ...targets, 1);
 
   // SVG chart
-  const W=900, H=130, padL=32, padR=8, padT=12, padB=36;
+  const W=1400, H=130, padL=32, padR=8, padT=12, padB=36;
   const chartW=W-padL-padR, chartH=H-padT-padB;
   const barW=Math.floor(chartW/months.length)-3;
   const barGap=3;
@@ -973,7 +973,7 @@ function renderExposure(){
             <line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#E8EAEA" stroke-width="1"/>`;
   }).join('');
 
-  const svgChart = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px">
+  const svgChart = `<svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px;min-width:${W}px">
     ${yTicks}
     ${bars}
     <polyline points="${linePoints}" fill="none" stroke="#9E7B2F" stroke-width="2" stroke-dasharray="5,3"/>
