@@ -373,8 +373,8 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
       <table><thead><tr id="tbl-hdr">
         <th class="s0h" style="min-width:54px">Unit</th>
         <th class="s1h" style="min-width:162px">Resident</th>
-        <th style="min-width:76px">Exp.</th>
-        <th style="min-width:65px">Deadline</th>
+        <th id="th-exp" style="min-width:76px;cursor:pointer;user-select:none" onclick="sortBy('exp')">Exp. <span id="sort-exp" style="color:var(--gold)">⇅</span></th>
+        <th id="th-deadline" style="min-width:65px;cursor:pointer;user-select:none" onclick="sortBy('deadline')">Deadline <span id="sort-deadline" style="color:var(--gold)">⇅</span></th>
         <th style="min-width:52px;text-align:right">Mkt</th>
         <th style="min-width:64px;text-align:right">Current</th>
         <th style="min-width:52px;text-align:right">vs Mkt</th>
@@ -534,6 +534,7 @@ let activeTargets= [];
 let activeMTMPct = 5.0, activeMTMType='pct', activeMTMFlatFee=100;
 let nType = 'pct';
 let settMode='mf', settEntity=null;
+let sortCol=null, sortDir=1; // sortCol: 'exp'|'deadline'|null, sortDir: 1=asc,-1=desc
 
 // ── LOAD APP ──────────────────────────────────────────────────
 async function loadApp(){
@@ -793,6 +794,25 @@ function updateNotesBar(s){
   } else bar.style.display='none';
 }
 
+
+// ── SORT ─────────────────────────────────────────────────────
+function sortBy(col){
+  if(sortCol===col) sortDir*=-1;
+  else { sortCol=col; sortDir=1; }
+  renderTable();
+}
+function getSortValue(u){
+  if(sortCol==='exp') return (u.ey*10000)+(u.em*100)+u.ed;
+  if(sortCol==='deadline'){
+    if(u.st==='evict'||u.st==='mtm') return sortDir>0?999999:-1;
+    if(!u.leaseEndDate) return sortDir>0?999999:-1;
+    const exp=new Date(u.ey,u.em-1,u.ed);
+    const dl=new Date(+exp-(u.s8?60:75)*86400000);
+    return dl.getTime();
+  }
+  return 0;
+}
+
 // ── METRICS ──────────────────────────────────────────────────
 function updateMetrics(){
   const units=activeUnits.filter(u=>u.st!=='vacant');
@@ -1026,6 +1046,19 @@ function getVisible(){
     if(stF!=='all'&&u.status!==stF)return false;
     return true;
   });
+  // Apply sort
+  if(sortCol){
+    filtered.sort((a,b)=>{
+      const av=getSortValue(a), bv=getSortValue(b);
+      return (av-bv)*sortDir;
+    });
+  }
+  // Update sort indicators
+  ['exp','deadline'].forEach(col=>{
+    const el=document.getElementById('sort-'+col);
+    if(el) el.textContent = sortCol===col?(sortDir>0?'↑':'↓'):'⇅';
+  });
+  return filtered;
 }
 function bulkApprove(){const vis=getVisible(),c=vis.filter(u=>u.status==='pending'&&u.st!=='evict');c.forEach(u=>setUnitStatus(activeUnits.indexOf(u),'approved',true));renderTable();updateMetrics();showToast(c.length+' units approved.');}
 function bulkUnapprove(){getVisible().forEach(u=>{if(u.status==='approved')u.status='pending';});renderTable();updateMetrics();}
