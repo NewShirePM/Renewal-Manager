@@ -648,6 +648,11 @@ async function loadUnitsForEntity(entityKey){
   );
   hideLoading();
   decisions = {};
+  // Auto-flag units where AppFolio already has a pending renewal offer
+  activeUnits.forEach(u=>{
+    if(u.afRenewalStatus==='Pending' && u.status==='pending') u.status='af_pending';
+  });
+
   decItems.forEach(item=>{
     const f = item.fields;
     decisions[String(f.UnitID||'')] = {
@@ -696,6 +701,7 @@ async function loadUnitsForEntity(entityKey){
       amiLevel: f.AMILevel||'',
       uSize: f.UnitSize||'',
       s8: !!f.HasS8Charge,
+      afRenewalStatus: f.AFRenewalStatus||'',
       notes: dec?.notes||'',
       status: dec?.status||'pending',
       mtmOnly: dec?.isMTMOnly||false,
@@ -1097,6 +1103,7 @@ function renderTable(){
     const isEv=u.st==='evict',isMTM=u.st==='mtm',isNR=u.status==='nr';
     const vsMkt=Math.round(u.curr-u.mkt);
     let flags='';
+    if(u.status==='af_pending')flags+=`<span class="bdg" style="background:#1A4A6B;color:#fff">AF Sent</span>`;
     if(u.amiLevel)flags+=`<span class="bdg b-ami">AMI ${u.amiLevel}</span>`;
     if(u.s8)flags+=`<span class="bdg b-s8">S8</span>`;
     if(isMTM)flags+=`<span class="bdg b-mtm">MTM</span>`;
@@ -1124,6 +1131,7 @@ function renderTable(){
     let sc='';
     if(isEv){sc='<span class="chip chn" style="font-size:9px">N/A</span>';}
     else if(isNR){sc=`<div class="st-cell"><span class="chip ch-nr">⊘ Non-Renew</span><input class="ni" type="text" value="${esc(u.nrReason)}" placeholder="Reason…" onchange="activeUnits[${ri}].nrReason=this.value;saveDecision(${ri})" style="width:145px"><button class="revert-btn" onclick="setUnitStatus(${ri},'pending')">↩ Revert</button></div>`;}
+    else if(u.status==='af_pending'){sc=`<div class="st-cell"><span class="chip" style="background:#1A4A6B;color:#fff;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700">✓ Offer Sent in AF</span></div>`;}
     else if(u.status==='pending'){sc=`<div class="st-cell"><div style="display:flex;gap:5px"><button class="st-pend" onclick="setUnitStatus(${ri},'approved')">Approve</button><button class="nr-btn" onclick="setUnitStatus(${ri},'nr')">Non-Renew</button></div></div>`;}
     else if(u.status==='approved'){sc=`<div class="st-cell"><span class="st-appr">✓ Approved</span><button class="mark-sent" onclick="setUnitStatus(${ri},'sent')">Mark Sent</button><button class="revert-btn" onclick="setUnitStatus(${ri},'pending')">↩ Revert</button></div>`;}
     else{const sd=u.sentDate?new Date(u.sentDate).toLocaleDateString():'today';sc=`<div class="st-cell"><span class="st-sent">✓ Sent ${sd}</span><button class="revert-btn" onclick="setUnitStatus(${ri},'approved')">↩ Revert</button></div>`;}
@@ -1159,7 +1167,7 @@ async function saveDecision(ri){
   const u=activeUnits[ri];
   const uid=u.unitId;
   const dec=decisions[uid];
-  const statusMap={pending:'Pending',approved:'Approved',sent:'Sent',nr:'Non-Renew'};
+  const statusMap={pending:'Pending',approved:'Approved',sent:'Sent',nr:'Non-Renew',af_pending:'AF Sent'};
   const fields={
     UnitID:uid,
     PropertyName:u.propertyName,
@@ -1168,6 +1176,7 @@ async function saveDecision(ri){
     ResidentName:u.n,
     RenewalCycleYear:CYCLE,
     LeaseEndDate:u.leaseEndDate||null,
+    IsS8:u.s8,
     IsMTMOnly:u.mtmOnly,
     AMILevel:u.amiLevel,
     UnitSize:u.uSize,
