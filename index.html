@@ -927,8 +927,13 @@ function renderExposure(){
   const nr       = units.filter(u=>u.status==='nr').length;
   const pending  = units.filter(u=>u.status==='pending'&&u.st!=='evict').length;
 
-  document.getElementById('exp-subtitle').textContent = s ? s.name : '';
-  document.getElementById('exp-kpis').innerHTML =
+  const expSubtitle = document.getElementById('exp-subtitle');
+  const expKpis = document.getElementById('exp-kpis');
+  const expChart = document.getElementById('exp-chart');
+  const expLegend = document.getElementById('exp-legend');
+  if(!expSubtitle||!expKpis||!expChart||!expLegend) return;
+  expSubtitle.textContent = s ? s.name : '';
+  expKpis.innerHTML =
     kpi('Total Units',total,'')+
     kpi('Pending',pending,'',pending>0?'var(--wa)':'var(--g4)')+
     kpi('Approved',approved,'','var(--ok)')+
@@ -1018,10 +1023,10 @@ function renderExposure(){
     }).join('')}
   </svg>`;
 
-  document.getElementById('exp-chart').innerHTML = svgChart;
+  expChart.innerHTML = svgChart;
 
   // Updated legend
-  document.getElementById('exp-legend').innerHTML = `
+  expLegend.innerHTML = `
     <div class="exp-leg"><div class="exp-dot" style="background:#4A78B0"></div>Current month</div>
     <div class="exp-leg"><div class="exp-dot" style="background:#CDA04B"></div>Target offer months</div>
     <div class="exp-leg"><div class="exp-dot" style="background:#D0D8DC"></div>Future months</div>
@@ -1040,7 +1045,7 @@ function getVisible(){
   const stF=document.getElementById('f-status').value;
   const showMTM=document.getElementById('tog-mtm').classList.contains('on');
   const showEv=document.getElementById('tog-ev').classList.contains('on');
-  return activeUnits.filter(u=>{
+  const filtered = activeUnits.filter(u=>{
     if(u.st==='evict'&&!showEv)return false;
     if(u.st==='mtm'&&!showMTM)return false;
     if(expF==='mtm')return u.st==='mtm';
@@ -1048,14 +1053,12 @@ function getVisible(){
     if(stF!=='all'&&u.status!==stF)return false;
     return true;
   });
-  // Apply sort
   if(sortCol){
     filtered.sort((a,b)=>{
       const av=getSortValue(a), bv=getSortValue(b);
       return (av-bv)*sortDir;
     });
   }
-  // Update sort indicators
   ['exp','deadline'].forEach(col=>{
     const el=document.getElementById('sort-'+col);
     if(el) el.textContent = sortCol===col?(sortDir>0?'↑':'↓'):'⇅';
