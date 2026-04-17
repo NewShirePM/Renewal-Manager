@@ -913,11 +913,13 @@ function setMTMType(t){activeMTMType=t;activeMTMPct=t==='pct'?5.0:75;document.ge
 
 // ── EXPOSURE PANEL ──────────────────────────────────────────
 function renderExposure(){
+  const expPanel = document.getElementById('exp-panel');
+  if(!expPanel) return; // not on review tab
   const s = allSettings[currentEntity];
   const units = activeUnits.filter(u=>u.st!=='vacant');
   const total = units.length;
-  if(!total){ document.getElementById('exp-panel').style.display='none'; return; }
-  document.getElementById('exp-panel').style.display='';
+  if(!total){ expPanel.style.display='none'; return; }
+  expPanel.style.display='';
 
   const mtm      = units.filter(u=>u.st==='mtm').length;
   const approved = units.filter(u=>u.status==='approved').length;
