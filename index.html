@@ -905,7 +905,7 @@ function renderExposure(){
   // Build 14 months starting from current
   const today = new Date();
   const months = [];
-  for(let i=0;i<14;i++){
+  for(let i=0;i<36;i++){
     const d = new Date(today.getFullYear(), today.getMonth()+i, 1);
     months.push({yr:d.getFullYear(), mo:d.getMonth()+1, label:MOS[d.getMonth()]+"'"+(d.getFullYear()%100), moIdx:d.getMonth()});
   }
@@ -928,7 +928,7 @@ function renderExposure(){
   const maxVal = Math.max(...vals, ...targets, 1);
 
   // SVG chart
-  const W=700, H=120, padL=32, padR=8, padT=12, padB=36;
+  const W=900, H=130, padL=32, padR=8, padT=12, padB=36;
   const chartW=W-padL-padR, chartH=H-padT-padB;
   const barW=Math.floor(chartW/months.length)-3;
   const barGap=3;
