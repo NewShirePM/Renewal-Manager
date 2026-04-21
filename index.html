@@ -378,7 +378,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
   <div class="twrap">
     <div class="tscr">
       <table><thead><tr id="tbl-hdr">
-        <th style="width:28px;padding:4px 2px"><input type="checkbox" id="sel-all" title="Select all visible" onchange="toggleSelectAll(this.checked)" style="cursor:pointer"></th>
+        <th style="width:20px;padding:2px;text-align:center"><input type="checkbox" id="sel-all" title="Select all" onchange="toggleSelectAll(this.checked)" style="cursor:pointer;width:13px;height:13px;margin:0"></th>
         <th class="s0h" style="min-width:54px">Unit</th>
         <th class="s1h" style="min-width:162px">Resident</th>
         <th id="th-exp" style="min-width:76px;cursor:pointer;user-select:none" onclick="sortBy('exp')">Exp. <span id="sort-exp" style="color:var(--gold)">⇅</span></th>
@@ -386,6 +386,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
         <th style="min-width:52px;text-align:right">Mkt</th>
         <th style="min-width:64px;text-align:right">Current</th>
         <th style="min-width:52px;text-align:right">vs Mkt</th>
+        <th style="min-width:100px;font-size:10px;font-weight:600">Lease Start</th>
       </tr></thead>
       <tbody id="tbl-body"></tbody></table>
     </div>
@@ -1228,8 +1229,8 @@ function renderTable(){
     if(isMTM)tr.className='row-mtm';if(isEv)tr.className='row-ev';if(isNR)tr.className='row-nr';
     if(selectedRows.has(ri)) tr.style.background='var(--teal5)';
     // Lease start date input for MTM and pending units
-    const showLeaseStart = (isMTM||u.status==='pending')&&!isNR&&!isEv&&u.status!=='af_pending';
-    const leaseStartHtml = showLeaseStart ? `<div style="margin-top:4px"><input type="date" value="${u.proposedLeaseStart||''}" title="Proposed lease start" style="font-size:10px;padding:2px 4px;border:1px solid var(--g2);border-radius:3px;font-family:var(--m);width:118px" onchange="activeUnits[${ri}].proposedLeaseStart=this.value;saveDecision(${ri})"></div>` : '';
+    const showLeaseStart = !isNR&&!isEv&&u.status!=='af_pending'&&u.status!=='sent';
+    const leaseStartHtml = showLeaseStart ? `<input type="date" value="${u.proposedLeaseStart||''}" title="Proposed lease start date" style="font-size:10px;padding:2px 4px;border:1px solid var(--g2);border-radius:3px;font-family:var(--m);width:95px" onchange="activeUnits[${ri}].proposedLeaseStart=this.value;saveDecision(${ri})">` : (u.proposedLeaseStart ? `<span style="font-size:10px;font-family:var(--m);color:var(--teal)">${u.proposedLeaseStart}</span>` : '<span style="color:var(--g3)">—</span>');
     tr.innerHTML=
       `<td style="padding:4px 2px;text-align:center"><input type="checkbox" ${selectedRows.has(ri)?'checked':''} onchange="toggleRowSelect(${ri},this.checked)" style="cursor:pointer"></td>`+
       `<td class="s0"><strong style="font-family:var(--m);font-size:11px">${esc(u.u)}</strong></td>`+
@@ -1239,7 +1240,7 @@ function renderTable(){
       `<td style="text-align:right;color:var(--g3)">$${u.mkt}</td>`+
       `<td style="text-align:right;font-weight:700;font-family:var(--m)">$${u.curr}</td>`+
       `<td style="text-align:right;color:${vsMkt<0?'var(--er)':'var(--g3)'}">${vsMkt>=0?'+':''}${vsMkt}</td>`+
-      tgtCells+mtmCell+mtmOnlyCell+notesCell+`<td>${sc}</td>`;
+      tgtCells+mtmCell+mtmOnlyCell+notesCell+`<td>${sc}</td>`+`<td style="padding:3px 6px">${leaseStartHtml}</td>`;
     tbody.appendChild(tr);
   });
   updateMetrics();
