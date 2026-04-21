@@ -354,6 +354,13 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
   </div>
 
 
+
+  <div id="bulk-sel-bar" style="display:none;background:var(--teal);color:#fff;padding:8px 14px;border-radius:var(--r);margin-bottom:8px;display:none;align-items:center;gap:10px;flex-wrap:wrap">
+    <span id="sel-count" style="font-weight:600;font-size:12px"></span>
+    <button onclick="bulkApproveSelected()" style="background:#fff;color:var(--teal);border:none;border-radius:4px;padding:4px 12px;font-weight:700;font-size:11px;cursor:pointer">✓ Approve Selected</button>
+    <button onclick="bulkSentSelected()" style="background:#fff;color:var(--teal);border:none;border-radius:4px;padding:4px 12px;font-weight:700;font-size:11px;cursor:pointer">✉ Mark Selected Sent</button>
+    <button onclick="selectedRows.clear();renderTable();updateBulkBar()" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.5);border-radius:4px;padding:4px 10px;font-size:11px;cursor:pointer">Clear</button>
+  </div>
   <div class="exp-panel" id="exp-panel">
     <div class="exp-title">
       <span>📊 Portfolio Exposure</span>
@@ -371,6 +378,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
   <div class="twrap">
     <div class="tscr">
       <table><thead><tr id="tbl-hdr">
+        <th style="width:28px;padding:4px 2px"><input type="checkbox" id="sel-all" title="Select all visible" onchange="toggleSelectAll(this.checked)" style="cursor:pointer"></th>
         <th class="s0h" style="min-width:54px">Unit</th>
         <th class="s1h" style="min-width:162px">Resident</th>
         <th id="th-exp" style="min-width:76px;cursor:pointer;user-select:none" onclick="sortBy('exp')">Exp. <span id="sort-exp" style="color:var(--gold)">⇅</span></th>
@@ -534,7 +542,8 @@ let activeTargets= [];
 let activeMTMPct = 5.0, activeMTMType='pct', activeMTMFlatFee=100;
 let nType = 'pct';
 let settMode='mf', settEntity=null;
-let sortCol=null, sortDir=1; // sortCol: 'exp'|'deadline'|null, sortDir: 1=asc,-1=desc
+let sortCol=null, sortDir=1;
+let selectedRows = new Set(); // ri indices of checked rows // sortCol: 'exp'|'deadline'|null, sortDir: 1=asc,-1=desc
 
 // ── LOAD APP ──────────────────────────────────────────────────
 async function loadApp(){
@@ -648,7 +657,26 @@ async function loadUnitsForEntity(entityKey){
   );
   hideLoading();
   decisions = {};
-  // Apply locked terms to approved/sent units
+  selectedRows.clear();
+
+  // FIRST: populate decisions from SharePoint data
+  decItems.forEach(item=>{
+    const f = item.fields;
+    decisions[String(f.UnitID||'')] = {
+      spId: item.id,
+      status: mapDecisionStatus(f.DecisionStatus),
+      nrReason: f.NonRenewReason||'',
+      notes: f.UnitNotes||'',
+      isMTMOnly: !!f.IsMTMOnly,
+      approvedDate: f.ApprovedDate||null,
+      sentDate: f.OfferSentDate||null,
+      offeredTerms: safeJSON(f.OfferedTermsJSON, []),
+      lockedTermsJSON: f.LockedTermsJSON||'',
+      proposedLeaseStart: f.ProposedLeaseStart||''
+    };
+  });
+
+  // THEN: apply locked terms to approved/sent units
   activeUnits.forEach(u=>{
     const dec = decisions[String(u.unitId||'')];
     if(dec && dec.lockedTermsJSON){
@@ -662,24 +690,9 @@ async function loadUnitsForEntity(entityKey){
     }
   });
 
-  // Auto-flag units where AppFolio already has a pending renewal offer
+  // THEN: auto-flag AppFolio pending renewal offers
   activeUnits.forEach(u=>{
     if(u.afRenewalStatus==='Pending' && u.status==='pending') u.status='af_pending';
-  });
-
-  decItems.forEach(item=>{
-    const f = item.fields;
-    decisions[String(f.UnitID||'')] = {
-      spId: item.id,
-      status: mapDecisionStatus(f.DecisionStatus),
-      nrReason: f.NonRenewReason||'',
-      notes: f.UnitNotes||'',
-      isMTMOnly: !!f.IsMTMOnly,
-      approvedDate: f.ApprovedDate||null,
-      sentDate: f.OfferSentDate||null,
-      offeredTerms: safeJSON(f.OfferedTermsJSON, []),
-      lockedTermsJSON: f.LockedTermsJSON||''
-    };
   });
 
   // Map to internal format
@@ -721,6 +734,7 @@ async function loadUnitsForEntity(entityKey){
       lockedMTMType: null,
       lockedMTMPct: null,
       lockedMTMFlatFee: null,
+      proposedLeaseStart: dec?.proposedLeaseStart||'',
       notes: dec?.notes||'',
       status: dec?.status||'pending',
       mtmOnly: dec?.isMTMOnly||false,
@@ -819,6 +833,49 @@ function updateNotesBar(s){
   } else bar.style.display='none';
 }
 
+
+
+// ── ROW SELECTION ────────────────────────────────────────────────────
+function toggleRowSelect(ri, checked){
+  if(checked) selectedRows.add(ri);
+  else selectedRows.delete(ri);
+  updateBulkBar();
+}
+function toggleSelectAll(checked){
+  const vis = getVisible();
+  vis.forEach(u => {
+    const ri = activeUnits.indexOf(u);
+    if(ri > -1){ if(checked) selectedRows.add(ri); else selectedRows.delete(ri); }
+  });
+  renderTable();
+  updateBulkBar();
+}
+function updateBulkBar(){
+  const bar = document.getElementById('bulk-sel-bar');
+  if(!bar) return;
+  const n = selectedRows.size;
+  bar.style.display = n > 0 ? '' : 'none';
+  const cnt = document.getElementById('sel-count');
+  if(cnt) cnt.textContent = n + ' selected';
+}
+function bulkApproveSelected(){
+  const toApprove = [...selectedRows].filter(ri=>{
+    const u=activeUnits[ri];
+    return u && u.status==='pending' && u.st!=='evict';
+  });
+  toApprove.forEach(ri=>setUnitStatus(ri,'approved',true));
+  renderTable(); updateMetrics();
+  showToast(toApprove.length+' units approved.');
+}
+function bulkSentSelected(){
+  const toSend = [...selectedRows].filter(ri=>{
+    const u=activeUnits[ri];
+    return u && (u.status==='approved'||u.status==='pending') && u.st!=='evict';
+  });
+  toSend.forEach(ri=>setUnitStatus(ri,'sent',true));
+  renderTable(); updateMetrics();
+  showToast(toSend.length+' units marked sent.');
+}
 
 // ── SORT ─────────────────────────────────────────────────────
 function sortBy(col){
@@ -1121,6 +1178,7 @@ function renderTable(){
     const ri=activeUnits.indexOf(u);
     const isEv=u.st==='evict',isMTM=u.st==='mtm',isNR=u.status==='nr';
     const vsMkt=Math.round(u.curr-u.mkt);
+    const isSelected = selectedRows.has(ri);
     let flags='';
     if(u.status==='af_pending')flags+=`<span class="bdg" style="background:#1A4A6B;color:#fff">AF Sent</span>`;
     if(u.amiLevel)flags+=`<span class="bdg b-ami">AMI ${u.amiLevel}</span>`;
@@ -1168,7 +1226,12 @@ function renderTable(){
 
     const tr=document.createElement('tr');
     if(isMTM)tr.className='row-mtm';if(isEv)tr.className='row-ev';if(isNR)tr.className='row-nr';
+    if(selectedRows.has(ri)) tr.style.background='var(--teal5)';
+    // Lease start date input for MTM and pending units
+    const showLeaseStart = (isMTM||u.status==='pending')&&!isNR&&!isEv&&u.status!=='af_pending';
+    const leaseStartHtml = showLeaseStart ? `<div style="margin-top:4px"><input type="date" value="${u.proposedLeaseStart||''}" title="Proposed lease start" style="font-size:10px;padding:2px 4px;border:1px solid var(--g2);border-radius:3px;font-family:var(--m);width:118px" onchange="activeUnits[${ri}].proposedLeaseStart=this.value;saveDecision(${ri})"></div>` : '';
     tr.innerHTML=
+      `<td style="padding:4px 2px;text-align:center"><input type="checkbox" ${selectedRows.has(ri)?'checked':''} onchange="toggleRowSelect(${ri},this.checked)" style="cursor:pointer"></td>`+
       `<td class="s0"><strong style="font-family:var(--m);font-size:11px">${esc(u.u)}</strong></td>`+
       `<td class="s1">${esc(u.n)}${flags?'<br><span style="line-height:2">'+flags+'</span>':''}</td>`+
       `<td style="font-family:var(--m);font-size:11px">${fmtDate(u)}</td>`+
@@ -1210,6 +1273,7 @@ async function saveDecision(ri){
     DecisionStatus:statusMap[u.status]||'Pending',
     UnitNotes:u.notes||'',
     LastUpdatedAt:new Date().toISOString(),
+    ProposedLeaseStart:u.proposedLeaseStart||null,
     LockedTermsJSON:(u.status==='approved'||u.status==='sent')&&!u.lockedTargets
       ? JSON.stringify({targets:activeTargets,mtmType:activeMTMType,mtmPct:activeMTMPct,mtmFlatFee:activeMTMFlatFee})
       : (u.lockedTargets ? JSON.stringify({targets:u.lockedTargets,mtmType:u.lockedMTMType,mtmPct:u.lockedMTMPct,mtmFlatFee:u.lockedMTMFlatFee}) : ''),
