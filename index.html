@@ -648,6 +648,20 @@ async function loadUnitsForEntity(entityKey){
   );
   hideLoading();
   decisions = {};
+  // Apply locked terms to approved/sent units
+  activeUnits.forEach(u=>{
+    const dec = decisions[String(u.unitId||'')];
+    if(dec && dec.lockedTermsJSON){
+      try{
+        const lt = JSON.parse(dec.lockedTermsJSON);
+        if(lt.targets) u.lockedTargets = lt.targets;
+        if(lt.mtmType) u.lockedMTMType = lt.mtmType;
+        if(lt.mtmPct!==undefined) u.lockedMTMPct = lt.mtmPct;
+        if(lt.mtmFlatFee!==undefined) u.lockedMTMFlatFee = lt.mtmFlatFee;
+      } catch(e){}
+    }
+  });
+
   // Auto-flag units where AppFolio already has a pending renewal offer
   activeUnits.forEach(u=>{
     if(u.afRenewalStatus==='Pending' && u.status==='pending') u.status='af_pending';
@@ -663,7 +677,8 @@ async function loadUnitsForEntity(entityKey){
       isMTMOnly: !!f.IsMTMOnly,
       approvedDate: f.ApprovedDate||null,
       sentDate: f.OfferSentDate||null,
-      offeredTerms: safeJSON(f.OfferedTermsJSON, [])
+      offeredTerms: safeJSON(f.OfferedTermsJSON, []),
+      lockedTermsJSON: f.LockedTermsJSON||''
     };
   });
 
@@ -702,6 +717,10 @@ async function loadUnitsForEntity(entityKey){
       uSize: f.UnitSize||'',
       s8: !!f.HasS8Charge,
       afRenewalStatus: f.AFRenewalStatus||'',
+      lockedTargets: null,
+      lockedMTMType: null,
+      lockedMTMPct: null,
+      lockedMTMFlatFee: null,
       notes: dec?.notes||'',
       status: dec?.status||'pending',
       mtmOnly: dec?.isMTMOnly||false,
@@ -1111,18 +1130,29 @@ function renderTable(){
     if(vsMkt<0)flags+=`<span class="bdg b-ltl">LTL</span>`;
 
     let tgtCells='';
-    activeTargets.forEach((t,ti)=>{
+    const renderTargets = u.lockedTargets||activeTargets;
+    const isLocked = !!(u.lockedTargets);
+    renderTargets.forEach((t,ti)=>{
       if(u.mtmOnly||isEv||isNR){tgtCells+='<td class="tcx"><span class="ona">—</span></td>';return;}
-      const r=calcOffer(u,ti);
-      if(r.mos<=0||r.mos>36){tgtCells+='<td class="tco"><span class="ona">n/a</span></td>';return;}
-      const ds=(r.d>=0?'+':'')+r.d.toFixed(0);
-      const warn=r.overAMI?`<div class="ami-warn">⚠ over $${r.amiMax}</div>`:'';
-      tgtCells+=`<td class="tco"><div class="ot">${r.mos}-mo</div><div class="ov">$${r.v.toFixed(0)}</div><div class="od ${r.d>=0?'dp':'dn'}">${ds}</div>${warn}</td>`;
+      const base=u.curr,ltl=u.mkt>base?u.mkt-base:0;
+      const inc=t.type==='pct'?base*(t.val/100):t.val;
+      const prop=Math.round((base+ltl+inc)*100)/100;
+      const d=Math.round((prop-base)*100)/100;
+      const mos=termMos(u.ey,u.em,t.yr,t.mo);
+      const amiMax=getAMIMax(u);
+      const overAMI=amiMax>0&&prop>amiMax;
+      if(mos<=0||mos>36){tgtCells+='<td class="tco"><span class="ona">n/a</span></td>';return;}
+      const ds=(d>=0?'+':'')+d.toFixed(0);
+      const warn=overAMI?`<div class="ami-warn">⚠ over $${amiMax}</div>`:'';
+      const lockIcon=isLocked?'<span style="font-size:8px;color:#9E7B2F">🔒</span>':'';
+      tgtCells+=`<td class="tco" style="${isLocked?'opacity:0.85;background:#FAFBF0':''}"><div class="ot">${mos}-mo ${lockIcon}</div><div class="ov">$${prop.toFixed(0)}</div><div class="od ${d>=0?'dp':'dn'}">${ds}</div>${warn}</td>`;
     });
+    // Pad to match activeTargets column count if locked unit has fewer terms
+    while(renderTargets.length < activeTargets.length) { tgtCells+='<td class="tco"></td>'; renderTargets.push({}); }
     let mtmCell='';
     if(showMTMO&&!isEv){
       if(isNR)mtmCell='<td class="tcx"><span class="ona">—</span></td>';
-      else{const m=calcMTM(u);const mw=m.overAMI?`<div class="ami-warn">⚠ over $${m.amiMax}</div>`:'';const ml=u.mtmOnly?'MTM-Only rate':`MTM +$${activeMTMFlatFee}`;mtmCell=`<td class="tcm"><div class="ot">${ml}</div><div class="ov">$${m.v.toFixed(0)}</div><div class="od ${m.d>=0?'dp':'dn'}">${m.d>=0?'+':''}${m.d.toFixed(0)}</div>${mw}</td>`;}
+      else{const lFee=u.lockedMTMFlatFee!==null&&u.lockedMTMFlatFee!==undefined?u.lockedMTMFlatFee:activeMTMFlatFee;const lMTMPct=u.lockedMTMPct!==null&&u.lockedMTMPct!==undefined?u.lockedMTMPct:activeMTMPct;const lMTMType=u.lockedMTMType||activeMTMType;const m=calcMTM(u);const mw=m.overAMI?`<div class="ami-warn">⚠ over $${m.amiMax}</div>`:'';const ml=u.mtmOnly?'MTM-Only rate':`MTM +$${lFee}`;mtmCell=`<td class="tcm"><div class="ot">${ml}</div><div class="ov">$${m.v.toFixed(0)}</div><div class="od ${m.d>=0?'dp':'dn'}">${m.d>=0?'+':''}${m.d.toFixed(0)}</div>${mw}</td>`;}
     }
 
     const mtmOnlyCell=`<td style="text-align:center"><div class="mtm-chk${u.mtmOnly?' on':''}" onclick="toggleMTMOnly(${ri},this)">${u.mtmOnly?'<span style="font-size:9px;color:#fff;font-weight:700">✓</span>':''}</div></td>`;
@@ -1176,15 +1206,13 @@ async function saveDecision(ri){
     ResidentName:u.n,
     RenewalCycleYear:CYCLE,
     LeaseEndDate:u.leaseEndDate||null,
-    IsS8:u.s8,
-    IsMTMOnly:u.mtmOnly,
-    AMILevel:u.amiLevel,
-    UnitSize:u.uSize,
-    IsNonRenew:u.status==='nr',
     NonRenewReason:u.nrReason||'',
     DecisionStatus:statusMap[u.status]||'Pending',
     UnitNotes:u.notes||'',
     LastUpdatedAt:new Date().toISOString(),
+    LockedTermsJSON:(u.status==='approved'||u.status==='sent')&&!u.lockedTargets
+      ? JSON.stringify({targets:activeTargets,mtmType:activeMTMType,mtmPct:activeMTMPct,mtmFlatFee:activeMTMFlatFee})
+      : (u.lockedTargets ? JSON.stringify({targets:u.lockedTargets,mtmType:u.lockedMTMType,mtmPct:u.lockedMTMPct,mtmFlatFee:u.lockedMTMFlatFee}) : ''),
     ApprovedDate:u.status==='approved'||u.status==='sent'?new Date().toISOString():null,
     OfferSentDate:u.status==='sent'?new Date().toISOString():null,
   };
