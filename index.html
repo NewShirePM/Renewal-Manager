@@ -386,7 +386,6 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
         <th style="min-width:52px;text-align:right">Mkt</th>
         <th style="min-width:64px;text-align:right">Current</th>
         <th style="min-width:52px;text-align:right">vs Mkt</th>
-        <th style="min-width:100px;font-size:10px;font-weight:600">Lease Start</th>
       </tr></thead>
       <tbody id="tbl-body"></tbody></table>
     </div>
@@ -1164,7 +1163,7 @@ function renderTable(){
 
   // Headers
   const hdr=document.getElementById('tbl-hdr');
-  while(hdr.children.length>7)hdr.removeChild(hdr.children[7]);
+  while(hdr.children.length>8)hdr.removeChild(hdr.children[8]);
   activeTargets.forEach(t=>{
     const rStr=t.type==='pct'?(t.val>=0?'+':'')+t.val.toFixed(1)+'%':'$'+(t.val>=0?'+':'')+t.val.toFixed(0);
     const th=document.createElement('th');th.className='th-t';
@@ -1173,6 +1172,7 @@ function renderTable(){
   });
   if(showMTMO){const thm=document.createElement('th');thm.className='th-m';thm.innerHTML=`MTM<span class="ths">+$${activeMTMFlatFee} / MTM-Only: ${activeMTMType==='pct'?'+'+activeMTMPct.toFixed(1)+'%':'$+'+activeMTMPct.toFixed(0)}</span>`;hdr.appendChild(thm);}
   ['MTM Only','Notes','Status'].forEach((c,ci)=>{const th=document.createElement('th');th.setAttribute('style',ci===1?'min-width:120px;white-space:normal':'min-width:'+(ci===2?'170':'60')+'px;text-align:center');th.textContent=c;hdr.appendChild(th);});
+  const thLS=document.createElement('th');thLS.style.cssText='min-width:105px;font-size:10px;font-weight:600;white-space:nowrap';thLS.textContent='Lease Start';hdr.appendChild(thLS);
 
   const tbody=document.getElementById('tbl-body');tbody.innerHTML='';
   vis.forEach(u=>{
