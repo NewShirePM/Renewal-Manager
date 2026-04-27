@@ -1129,10 +1129,14 @@ function getVisible(){
   const showEv=document.getElementById('tog-ev').classList.contains('on');
   const filtered = activeUnits.filter(u=>{
     if(u.st==='evict'&&!showEv)return false;
-    if(u.st==='mtm'&&!showMTM)return false;
+    // Only hide MTM units from view if toggle is off AND they haven't been actioned
+    if(u.st==='mtm'&&!showMTM&&u.status==='pending')return false;
     if(expF==='mtm')return u.st==='mtm';
     if(expF!=='all'&&moLabel(u)!==expF)return false;
-    if(stF!=='all'&&u.status!==stF)return false;
+    if(stF!=='all'){
+      const effectiveStatus = u.status==='af_pending'?'sent':u.status;
+      if(effectiveStatus!==stF) return false;
+    }
     return true;
   });
   if(sortCol){
@@ -1223,7 +1227,7 @@ function renderTable(){
     else if(u.status==='af_pending'){sc=`<div class="st-cell"><span class="chip" style="background:#1A4A6B;color:#fff;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700">✓ Offer Sent in AF</span></div>`;}
     else if(u.status==='pending'){sc=`<div class="st-cell"><div style="display:flex;gap:5px"><button class="st-pend" onclick="setUnitStatus(${ri},'approved')">Approve</button><button class="nr-btn" onclick="setUnitStatus(${ri},'nr')">Non-Renew</button></div></div>`;}
     else if(u.status==='approved'){sc=`<div class="st-cell"><span class="st-appr">✓ Approved</span><button class="mark-sent" onclick="setUnitStatus(${ri},'sent')">Mark Sent</button><button class="revert-btn" onclick="setUnitStatus(${ri},'pending')">↩ Revert</button></div>`;}
-    else{const sd=u.sentDate?new Date(u.sentDate).toLocaleDateString():'unknown';sc=`<div class="st-cell"><span class="st-sent">✓ Sent on ${sd}</span><button class="revert-btn" onclick="setUnitStatus(${ri},'approved')">↩ Revert</button></div>`;}
+    else{const sd=u.sentDate?new Date(u.sentDate).toLocaleDateString():'';sc=`<div class="st-cell"><span class="st-sent">${sd?'✓ Sent on '+sd:'✓ Sent'}</span><button class="revert-btn" onclick="setUnitStatus(${ri},'approved')">↩ Revert</button></div>`;}
 
     const tr=document.createElement('tr');
     if(isMTM)tr.className='row-mtm';if(isEv)tr.className='row-ev';if(isNR)tr.className='row-nr';
@@ -1259,6 +1263,8 @@ async function setUnitStatus(ri, status, silent=false){
     u.lockedMTMPct     = activeMTMPct;
     u.lockedMTMFlatFee = activeMTMFlatFee;
   }
+  if(status==='sent' && !u.sentDate) u.sentDate = new Date().toISOString();
+  if((status==='approved'||status==='sent') && !u.approvedDate) u.approvedDate = new Date().toISOString();
   if(!silent){
     renderTable();
     await saveDecision(ri);
@@ -1286,8 +1292,12 @@ async function saveDecision(ri){
     LockedTermsJSON:(u.status==='approved'||u.status==='sent')&&!u.lockedTargets
       ? JSON.stringify({targets:activeTargets,mtmType:activeMTMType,mtmPct:activeMTMPct,mtmFlatFee:activeMTMFlatFee})
       : (u.lockedTargets ? JSON.stringify({targets:u.lockedTargets,mtmType:u.lockedMTMType,mtmPct:u.lockedMTMPct,mtmFlatFee:u.lockedMTMFlatFee}) : ''),
-    ApprovedDate:u.status==='approved'||u.status==='sent'?new Date().toISOString():null,
-    OfferSentDate:u.status==='sent'?new Date().toISOString():null,
+    ApprovedDate:(u.status==='approved'||u.status==='sent')
+      ? (dec?.approvedDate || new Date().toISOString())
+      : null,
+    OfferSentDate:u.status==='sent'
+      ? (u.sentDate || dec?.sentDate || new Date().toISOString())
+      : null,
   };
   try{
     if(dec){
