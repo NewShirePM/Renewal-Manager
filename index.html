@@ -1223,7 +1223,7 @@ function renderTable(){
     else if(u.status==='af_pending'){sc=`<div class="st-cell"><span class="chip" style="background:#1A4A6B;color:#fff;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700">✓ Offer Sent in AF</span></div>`;}
     else if(u.status==='pending'){sc=`<div class="st-cell"><div style="display:flex;gap:5px"><button class="st-pend" onclick="setUnitStatus(${ri},'approved')">Approve</button><button class="nr-btn" onclick="setUnitStatus(${ri},'nr')">Non-Renew</button></div></div>`;}
     else if(u.status==='approved'){sc=`<div class="st-cell"><span class="st-appr">✓ Approved</span><button class="mark-sent" onclick="setUnitStatus(${ri},'sent')">Mark Sent</button><button class="revert-btn" onclick="setUnitStatus(${ri},'pending')">↩ Revert</button></div>`;}
-    else{const sd=u.sentDate?new Date(u.sentDate).toLocaleDateString():'today';sc=`<div class="st-cell"><span class="st-sent">✓ Sent ${sd}</span><button class="revert-btn" onclick="setUnitStatus(${ri},'approved')">↩ Revert</button></div>`;}
+    else{const sd=u.sentDate?new Date(u.sentDate).toLocaleDateString():'unknown';sc=`<div class="st-cell"><span class="st-sent">✓ Sent on ${sd}</span><button class="revert-btn" onclick="setUnitStatus(${ri},'approved')">↩ Revert</button></div>`;}
 
     const tr=document.createElement('tr');
     if(isMTM)tr.className='row-mtm';if(isEv)tr.className='row-ev';if(isNR)tr.className='row-nr';
@@ -1248,9 +1248,17 @@ function renderTable(){
 }
 
 // ── STATUS ACTIONS ────────────────────────────────────────────
-async function setUnitStatus(ri, status, silent=false){
-  activeUnits[ri].status=status;
-  if(status==='nr'&&!activeUnits[ri].nrReason)activeUnits[ri].nrReason='';
+async async function setUnitStatus(ri, status, silent=false){
+  const u = activeUnits[ri];
+  u.status = status;
+  if(status==='nr'&&!u.nrReason) u.nrReason='';
+  // Snapshot locked terms on first approval
+  if((status==='approved'||status==='sent') && !u.lockedTargets){
+    u.lockedTargets    = JSON.parse(JSON.stringify(activeTargets));
+    u.lockedMTMType    = activeMTMType;
+    u.lockedMTMPct     = activeMTMPct;
+    u.lockedMTMFlatFee = activeMTMFlatFee;
+  }
   if(!silent){
     renderTable();
     await saveDecision(ri);
