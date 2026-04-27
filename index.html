@@ -1248,7 +1248,7 @@ function renderTable(){
 }
 
 // ── STATUS ACTIONS ────────────────────────────────────────────
-async async function setUnitStatus(ri, status, silent=false){
+async function setUnitStatus(ri, status, silent=false){
   const u = activeUnits[ri];
   u.status = status;
   if(status==='nr'&&!u.nrReason) u.nrReason='';
