@@ -1203,6 +1203,13 @@ function kpi(label,val,sub='',color='var(--teal)'){
 
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────
+
+async function loadAllDecisions(){
+  try{
+    allDecisionsCache = await getAllItems('NS_Renewal_Decisions');
+  } catch(e){ console.warn('Could not load all decisions:', e.message); }
+}
+
 async function loadDashboard(){
   document.getElementById('dash-updated').textContent = 'Loading…';
   
