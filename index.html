@@ -1207,6 +1207,8 @@ function kpi(label,val,sub='',color='var(--teal)'){
 async function loadAllDecisions(){
   try{
     allDecisionsCache = await getAllItems('NS_Renewal_Decisions');
+    // Re-render exposure chart now that sent data is available
+    if(currentEntity) renderExposure();
   } catch(e){ console.warn('Could not load all decisions:', e.message); }
 }
 
