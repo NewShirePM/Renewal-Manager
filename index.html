@@ -686,14 +686,7 @@ async function loadUnitsForEntity(entityKey){
     };
   });
 
-  // THEN: auto-flag AppFolio pending renewal offers and non-renews
-  activeUnits.forEach(u=>{
-    if(u.afRenewalStatus==='Pending' && u.status==='pending') u.status='af_pending';
-    if(u.afNonRenew && u.status==='pending'){
-      u.status='nr';
-      u.nrReason='Non-renewal indicated in AppFolio';
-    }
-  });
+
 
   // Map to internal format
   return rawUnits.map(item=>{
@@ -737,9 +730,21 @@ async function loadUnitsForEntity(entityKey){
       lockedMTMFlatFee: (()=>{ if(!dec?.lockedTermsJSON) return null; try{ const lt=JSON.parse(dec.lockedTermsJSON); return lt.mtmFlatFee!==undefined?lt.mtmFlatFee:null; }catch(e){return null;} })(),
       proposedLeaseStart: dec?.proposedLeaseStart||'',
       notes: dec?.notes||'',
-      status: dec?.status||'pending',
+      status: (()=>{
+        const afNR=f.AFNonRenew===true||(f.LeaseStatus||'').includes('Notice');
+        const afPending=(f.AFRenewalStatus||'')==='Pending';
+        // AppFolio status takes priority
+        if(afPending) return 'af_pending';
+        if(afNR) return 'nr';
+        // Fall back to what was saved in SharePoint
+        return dec?.status||'pending';
+      })(),
       mtmOnly: dec?.isMTMOnly||false,
-      nrReason: dec?.nrReason||'',
+      nrReason: (()=>{
+        const afNR=f.AFNonRenew===true||(f.LeaseStatus||'').includes('Notice');
+        if(afNR&&!dec?.nrReason) return 'Non-renewal indicated in AppFolio';
+        return dec?.nrReason||'';
+      })(),
       unitId: uid,
       propertyName: f.PropertyName||'',
       ownerName: f.OwnerName||'',
