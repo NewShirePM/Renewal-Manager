@@ -252,6 +252,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
   <div class="tb-logo"><img id="ns-logo" alt="NS"></div>
   <span class="tb-name">Renewal Manager</span>
   <div class="tabs">
+    <div class="tab" onclick="showTab('dashboard',this)">📊 Dashboard</div>
     <div class="tab on" onclick="showTab('review',this)">Renewal Review</div>
     <div class="tab" onclick="showTab('settings',this)">Settings</div>
   </div>
@@ -264,6 +265,27 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
 <div class="page">
 
 <!-- RENEWAL REVIEW -->
+<div class="tc" id="tc-dashboard">
+  <div style="padding:18px 0 10px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div style="font-size:15px;font-weight:700;color:var(--teal)">Portfolio Renewal Dashboard</div>
+      <div style="font-size:10px;color:var(--g4)" id="dash-updated"></div>
+    </div>
+    <!-- Company-wide exposure chart -->
+    <div class="exp-panel" style="margin-bottom:16px">
+      <div class="exp-title">
+        <span>📊 Company-Wide Exposure</span>
+        <span style="font-size:10px;font-weight:400;color:var(--g4)">All portfolios · 36 months</span>
+      </div>
+      <div class="exp-grid" id="dash-kpis"></div>
+      <div class="exp-chart" id="dash-chart"></div>
+      <div class="exp-legend" id="dash-legend"></div>
+    </div>
+    <!-- Per-portfolio cards -->
+    <div id="dash-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
+  </div>
+</div>
+
 <div class="tc on" id="tc-review">
   <div class="prow" style="flex-direction:column;align-items:flex-start;gap:8px">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -553,6 +575,7 @@ let activeMTMPct = 5.0, activeMTMType='pct', activeMTMFlatFee=100;
 let nType = 'pct';
 let settMode='mf', settEntity=null;
 let sortCol=null, sortDir=1;
+let allDecisionsCache = [];
 let selectedRows = new Set(); // ri indices of checked rows // sortCol: 'exp'|'deadline'|null, sortDir: 1=asc,-1=desc
 
 // ── LOAD APP ──────────────────────────────────────────────────
@@ -628,6 +651,7 @@ async function loadSettings(){
   const sfrCount = getSFRKeys().length;
   showToast('Loaded '+mfCount+' MF properties · '+sfrCount+' SFR owners');
   buildSettingsSelectors();
+  loadAllDecisions();
 }
 
 
@@ -1178,6 +1202,204 @@ function kpi(label,val,sub='',color='var(--teal)'){
 }
 
 
+// ── DASHBOARD ─────────────────────────────────────────────────────────
+async function loadDashboard(){
+  document.getElementById('dash-updated').textContent = 'Loading…';
+  
+  // Load all units and decisions
+  const [allUnits, allDecs] = await Promise.all([
+    getAllItems('NS_Units_Cache'),
+    getAllItems('NS_Renewal_Decisions')
+  ]);
+
+  const today = new Date();
+  const decByUnit = {};
+  allDecs.forEach(item=>{
+    const f = item.fields;
+    decByUnit[String(f.UnitID||'')] = f;
+  });
+
+  // Build per-entity stats
+  const entityStats = {};
+  Object.keys(allSettings).forEach(key=>{
+    entityStats[key] = {
+      name: allSettings[key].name,
+      portfolioType: allSettings[key].portfolioType,
+      ownerName: allSettings[key].ownerName,
+      total:0, pending:0, approved:0, sent:0, nr:0, afPending:0, overdue:0, due30:0
+    };
+  });
+
+  // Company-wide month counts
+  const months = [];
+  for(let i=0;i<36;i++){
+    const d = new Date(today.getFullYear(), today.getMonth()+i, 1);
+    months.push({yr:d.getFullYear(), mo:d.getMonth()+1, label:MOS[d.getMonth()]+"'"+(d.getFullYear()%100), moIdx:d.getMonth()});
+  }
+  const expByMonth = {}, sentByMonth = {};
+  months.forEach(m=>{ expByMonth[m.yr+'-'+m.mo]=0; sentByMonth[m.yr+'-'+m.mo]=0; });
+
+  allUnits.forEach(item=>{
+    const f = item.fields;
+    if((f.LeaseStatus||'').includes('Vacant')) return;
+    const uid = String(f.UnitID||item.id);
+    const dec = decByUnit[uid];
+    
+    // Match to entity
+    const isMF = (f.PortfolioType||'').toLowerCase().includes('multi') || (f.PortfolioType||'')==='MF';
+    const matchKey = isMF ? f.PropertyName : f.OwnerName;
+    const entityKey = Object.keys(allSettings).find(k => allSettings[k].ownerName === matchKey);
+    if(!entityKey) return;
+    const stat = entityStats[entityKey];
+    stat.total++;
+
+    // Status
+    const decStatus = (dec?.DecisionStatus||'').toLowerCase();
+    const afRS = f.AFRenewalStatus||'';
+    const afNR = f.AFNonRenew===true||(f.LeaseStatus||'').includes('Notice');
+    let st;
+    if(afRS==='Pending') st='af_pending';
+    else if(afNR) st='nr';
+    else if(decStatus==='sent') st='sent';
+    else if(decStatus==='approved') st='approved';
+    else if(decStatus==='non-renew') st='nr';
+    else st='pending';
+
+    if(st==='af_pending') stat.afPending++;
+    else if(st==='sent') stat.sent++;
+    else if(st==='approved') stat.approved++;
+    else if(st==='nr') stat.nr++;
+    else stat.pending++;
+
+    // Expiration tracking
+    const leaseEnd = (f.HasS8Charge&&f.EligibleForRentIncreaseOn)
+      ? f.EligibleForRentIncreaseOn.substring(0,10)
+      : (f.LeaseEndDate||'').substring(0,10);
+    if(leaseEnd){
+      const exp = new Date(leaseEnd);
+      const ey=exp.getFullYear(), em=exp.getMonth()+1;
+      const k=ey+'-'+em;
+      if(expByMonth[k]!==undefined) expByMonth[k]++;
+      
+      const windowDays = f.HasS8Charge?60:75;
+      const deadline = new Date(exp - windowDays*86400000);
+      const daysToDeadline = Math.round((deadline - today)/86400000);
+      
+      if(st==='pending'||st==='approved'){
+        if(daysToDeadline < 0) stat.overdue++;
+        else if(daysToDeadline <= 30) stat.due30++;
+      }
+    }
+
+    // Sent by month (for company-wide chart)
+    if((st==='sent'||st==='af_pending') && dec?.LockedTermsJSON){
+      try{
+        const lt = JSON.parse(dec.LockedTermsJSON);
+        (lt.targets||[]).forEach(t=>{
+          const k=t.yr+'-'+t.mo;
+          if(sentByMonth[k]!==undefined) sentByMonth[k]++;
+        });
+      }catch(e){}
+    }
+  });
+
+  // Company-wide KPIs
+  const totals = Object.values(entityStats).reduce((acc,s)=>({
+    total:acc.total+s.total, pending:acc.pending+s.pending,
+    approved:acc.approved+s.approved, sent:acc.sent+s.sent+s.afPending,
+    nr:acc.nr+s.nr, overdue:acc.overdue+s.overdue, due30:acc.due30+s.due30
+  }), {total:0,pending:0,approved:0,sent:0,nr:0,overdue:0,due30:0});
+
+  document.getElementById('dash-kpis').innerHTML =
+    kpi('Total Units',totals.total)+
+    kpi('Overdue',totals.overdue,'no offer sent',totals.overdue>0?'var(--er)':'var(--g4)')+
+    kpi('Due ≤30d',totals.due30,'need action',totals.due30>0?'var(--wa)':'var(--g4)')+
+    kpi('Pending',totals.pending,'',totals.pending>0?'var(--wa)':'var(--g4)')+
+    kpi('Approved',totals.approved,'','var(--ok)')+
+    kpi('Sent',totals.sent,'','var(--inf)')+
+    kpi('Non-Renew',totals.nr,'');
+
+  // Company-wide chart
+  renderDashChart(months, expByMonth, sentByMonth);
+
+  // Per-entity cards
+  renderDashCards(entityStats);
+
+  document.getElementById('dash-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+function renderDashChart(months, expByMonth, sentByMonth){
+  const W=1400, H=120, padL=32, padR=8, padT=12, padB=36;
+  const chartW=W-padL-padR, chartH=H-padT-padB;
+  const barW=Math.floor(chartW/months.length)-3, barGap=3;
+  const vals = months.map(m=>expByMonth[m.yr+'-'+m.mo]||0);
+  const svals = months.map(m=>sentByMonth[m.yr+'-'+m.mo]||0);
+  const maxVal = Math.max(...vals, ...svals, 1);
+  const yScale = v => chartH - Math.round((v/maxVal)*chartH);
+  const today = new Date();
+
+  const bars = months.map((m,i)=>{
+    const v=vals[i], sv=svals[i];
+    const isCurrent=(m.yr===today.getFullYear()&&m.mo===today.getMonth()+1);
+    const fill=isCurrent?'#4A78B0':'#D0D8DC';
+    const x=padL+i*(barW+barGap);
+    const bH=Math.max(2,Math.round((v/maxVal)*chartH));
+    const sH=Math.max(0,Math.round((sv/maxVal)*chartH));
+    const sentW=Math.max(4,Math.round(barW*0.4));
+    return `
+      <rect x="${x}" y="${padT+chartH-bH}" width="${barW}" height="${bH}" fill="${fill}" rx="2"><title>${m.label}: ${v} expiring</title></rect>
+      ${sH>0?`<rect x="${x+barW-sentW}" y="${padT+chartH-sH}" width="${sentW}" height="${sH}" fill="#2D8A5A" rx="2" opacity="0.85"><title>${m.label}: ${sv} sent</title></rect>`:''}
+      <text x="${x+barW/2}" y="${H-padB+13}" text-anchor="middle" font-size="9" fill="#7A8585">${m.label}</text>
+      ${v>0?`<text x="${x+(barW-sentW)/2}" y="${padT+chartH-bH-3}" text-anchor="middle" font-size="8" fill="#28434C">${v}</text>`:''}
+      ${sH>0?`<text x="${x+barW-sentW/2}" y="${padT+chartH-sH-3}" text-anchor="middle" font-size="8" fill="#2D8A5A" font-weight="700">${sv}</text>`:''}
+    `;
+  }).join('');
+
+  const chart = document.getElementById('dash-chart');
+  if(chart) chart.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px;min-width:${W}px">${bars}</svg>`;
+
+  const legend = document.getElementById('dash-legend');
+  if(legend) legend.innerHTML = `
+    <div class="exp-leg"><div class="exp-dot" style="background:#4A78B0"></div>Current month</div>
+    <div class="exp-leg"><div class="exp-dot" style="background:#D0D8DC"></div>Expiring (all portfolios)</div>
+    <div class="exp-leg"><div class="exp-dot" style="background:#2D8A5A"></div>Renewals sent (company-wide)</div>
+  `;
+}
+
+function renderDashCards(entityStats){
+  const container = document.getElementById('dash-cards');
+  if(!container) return;
+  
+  // Sort: overdue first, then due30, then by name
+  const sorted = Object.keys(entityStats).sort((a,b)=>{
+    const sa=entityStats[a], sb=entityStats[b];
+    if(sa.overdue!==sb.overdue) return sb.overdue-sa.overdue;
+    if(sa.due30!==sb.due30) return sb.due30-sa.due30;
+    return sa.name.localeCompare(sb.name);
+  });
+
+  container.innerHTML = sorted.map(key=>{
+    const s = entityStats[key];
+    if(s.total===0) return '';
+    const sentTotal = s.sent+s.afPending;
+    const attention = s.overdue>0?'border-left:3px solid var(--er)':s.due30>0?'border-left:3px solid var(--wa)':'border-left:3px solid var(--g2)';
+    return `<div style="background:var(--white);border:1px solid var(--g1);border-radius:var(--r);padding:12px;${attention}">
+      <div style="font-size:11px;font-weight:700;color:var(--teal);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+        <span>${s.name}</span>
+        <span style="font-size:9px;font-weight:400;color:var(--g4)">${s.portfolioType==='Multi-Family'?'MF':'SFR'} · ${s.total} units</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:10px">
+        ${s.overdue>0?`<div style="background:#FFF0F0;border-radius:4px;padding:5px;text-align:center"><div style="font-weight:700;color:var(--er);font-size:14px">${s.overdue}</div><div style="color:var(--er)">Overdue</div></div>`:''}
+        ${s.due30>0?`<div style="background:#FFFBF0;border-radius:4px;padding:5px;text-align:center"><div style="font-weight:700;color:var(--wa);font-size:14px">${s.due30}</div><div style="color:var(--wa)">Due ≤30d</div></div>`:''}
+        ${s.pending>0?`<div style="background:var(--teal5);border-radius:4px;padding:5px;text-align:center"><div style="font-weight:700;color:var(--teal);font-size:14px">${s.pending}</div><div style="color:var(--teal2)">Pending</div></div>`:''}
+        ${s.approved>0?`<div style="background:#F0FFF4;border-radius:4px;padding:5px;text-align:center"><div style="font-weight:700;color:var(--ok);font-size:14px">${s.approved}</div><div style="color:var(--ok)">Approved</div></div>`:''}
+        ${sentTotal>0?`<div style="background:#EEF4FF;border-radius:4px;padding:5px;text-align:center"><div style="font-weight:700;color:var(--inf);font-size:14px">${sentTotal}</div><div style="color:var(--inf)">Sent</div></div>`:''}
+        ${s.nr>0?`<div style="background:var(--nrb);border-radius:4px;padding:5px;text-align:center"><div style="font-weight:700;color:var(--gold);font-size:14px">${s.nr}</div><div style="color:var(--gold)">Non-Renew</div></div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
 // ── FILTER / VISIBLE ──────────────────────────────────────────
 function getVisible(){
   const expF=document.getElementById('f-exp').value;
@@ -1590,6 +1812,7 @@ function showTab(id,tab){
   document.querySelectorAll('.tab').forEach(el=>el.classList.remove('on'));
   document.getElementById('tc-'+id).classList.add('on');
   tab.classList.add('on');
+  if(id==='dashboard') loadDashboard();
 }
 
 // ── HELPERS ───────────────────────────────────────────────────
