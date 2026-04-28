@@ -334,6 +334,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:2px">
           <div style="display:flex;align-items:center;gap:4px"><div class="tog on" id="tog-mtm" onclick="this.classList.toggle('on');renderTable()"></div><span class="tl">MTM</span></div>
           <div style="display:flex;align-items:center;gap:4px"><div class="tog" id="tog-ev" onclick="this.classList.toggle('on');renderTable()"></div><span class="tl">Evictions</span></div>
+        <div style="display:flex;align-items:center;gap:4px;margin-top:4px"><div class="tog" id="tog-nr" onclick="this.classList.toggle('on');renderTable()"></div><span class="tl">Non-Renew</span></div>
         </div>
         <span class="vlbl" id="vw-lbl"></span>
       </div>
@@ -513,7 +514,11 @@ function iUrl(list,id){return`${SITE}/lists/${list}/items/${id}/fields`;}
 async function gFetch(url,opts={}){
   const t = await getToken();
   const r = await fetch(url,{...opts,headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json",...(opts.headers||{})}});
-  if(!r.ok){const e=await r.text();throw new Error(`${r.status}: ${e}`);}
+  if(!r.ok){
+    const body=await r.text();
+    console.error('gFetch',r.status,url.split('lists/')[1]?.split('/')[0]||url,body.substring(0,200));
+    throw new Error(r.status+': '+body);
+  }
   return r.status===204?null:r.json();
 }
 
@@ -1174,8 +1179,11 @@ function getVisible(){
   const stF=document.getElementById('f-status').value;
   const showMTM=document.getElementById('tog-mtm').classList.contains('on');
   const showEv=document.getElementById('tog-ev').classList.contains('on');
+  const showNR=document.getElementById('tog-nr')?.classList.contains('on');
   const filtered = activeUnits.filter(u=>{
     if(u.st==='evict'&&!showEv)return false;
+    // Hide NR units unless toggle is on
+    if(u.status==='nr'&&!showNR)return false;
     // Only hide MTM units from view if toggle is off AND they haven't been actioned
     if(u.st==='mtm'&&!showMTM&&u.status==='pending')return false;
     if(expF==='mtm')return u.st==='mtm';
@@ -1282,7 +1290,13 @@ function renderTable(){
 
     let sc='';
     if(isEv){sc='<span class="chip chn" style="font-size:9px">N/A</span>';}
-    else if(isNR){sc=`<div class="st-cell"><span class="chip ch-nr">⊘ Non-Renew</span><input class="ni" type="text" value="${esc(u.nrReason)}" placeholder="Reason…" onchange="activeUnits[${ri}].nrReason=this.value;saveDecision(${ri})" style="width:145px"><button class="revert-btn" onclick="setUnitStatus(${ri},'pending')">↩ Revert</button></div>`;}
+    else if(isNR){
+      const isAFNR = u.afNonRenew && u.nrReason==='Non-renewal indicated in AppFolio';
+      sc=`<div class="st-cell">
+        <span class="chip ch-nr">⊘ Non-Renew${isAFNR?' (AF)':''}</span>
+        ${isAFNR?'':`<input class="ni" type="text" value="${esc(u.nrReason)}" placeholder="Reason…" onchange="activeUnits[${ri}].nrReason=this.value;saveDecision(${ri})" style="width:110px">`}
+        <button style="background:#2D6A4F;color:#fff;border:none;padding:3px 9px;border-radius:4px;font-size:10px;cursor:pointer;margin-left:4px" onclick="rescindNonRenew(${ri})">↩ Rescind</button>
+      </div>`;}
     else if(u.status==='af_pending'){sc=`<div class="st-cell"><span class="chip" style="background:#1A4A6B;color:#fff;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700">✓ Offer Sent in AF</span></div>`;}
     else if(u.status==='pending'){sc=`<div class="st-cell"><div style="display:flex;gap:5px"><button class="st-pend" onclick="setUnitStatus(${ri},'approved')">Approve</button><button class="nr-btn" onclick="setUnitStatus(${ri},'nr')">Non-Renew</button></div></div>`;}
     else if(u.status==='approved'){sc=`<div class="st-cell"><span class="st-appr">✓ Approved</span><button class="mark-sent" onclick="setUnitStatus(${ri},'sent')">Mark Sent</button><button class="revert-btn" onclick="setUnitStatus(${ri},'pending')">↩ Revert</button></div>`;}
@@ -1311,6 +1325,17 @@ function renderTable(){
 }
 
 // ── STATUS ACTIONS ────────────────────────────────────────────
+
+async function rescindNonRenew(ri){
+  const u = activeUnits[ri];
+  u.status = 'pending';
+  u.nrReason = '';
+  u.afNonRenew = false; // allow re-processing
+  renderTable();
+  await saveDecision(ri);
+  showToast('Non-renewal rescinded for '+u.n+'. Unit is now Pending.');
+}
+
 async function setUnitStatus(ri, status, silent=false){
   const u = activeUnits[ri];
   u.status = status;
@@ -1367,8 +1392,19 @@ async function saveDecision(ri){
     }
     showToast('Saved.');
   } catch(e){
-    const msg = e.message?.includes('403') ? 'Save failed: You need Contribute access to NS_Renewal_Decisions in SharePoint. Ask your admin.' : 'Save failed: '+e.message;
+    const code = e.message?.match(/\d{3}/)?.[0];
+    let msg;
+    if(code==='401'){
+      msg='Session expired — signing you back in…';
+      showToast(msg,true);
+      try{ await msalInstance.acquireTokenPopup({scopes:SCOPES,account}); await saveDecision(ri); return; }catch(e2){ showToast('Re-auth failed: '+e2.message,true); return; }
+    } else if(code==='403'){
+      msg='Save failed (403): Cara needs Contribute permission on NS_Renewal_Decisions list in SharePoint — site Owner alone is not enough if list permissions were broken. Go to the list → Settings → Permissions → Grant Access.';
+    } else {
+      msg='Save failed ('+code+'): '+e.message;
+    }
     showToast(msg,true);
+    console.error('saveDecision error:', e.message, 'fields:', JSON.stringify(fields).substring(0,200));
   }
 }
 
