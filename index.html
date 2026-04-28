@@ -355,10 +355,15 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
 
 
 
-  <div id="bulk-sel-bar" style="display:none;background:var(--teal);color:#fff;padding:8px 14px;border-radius:var(--r);margin-bottom:8px;display:none;align-items:center;gap:10px;flex-wrap:wrap">
+  <div id="bulk-sel-bar" style="display:none;background:var(--teal);color:#fff;padding:8px 14px;border-radius:var(--r);margin-bottom:8px;align-items:center;gap:10px;flex-wrap:wrap">
     <span id="sel-count" style="font-weight:600;font-size:12px"></span>
     <button onclick="bulkApproveSelected()" style="background:#fff;color:var(--teal);border:none;border-radius:4px;padding:4px 12px;font-weight:700;font-size:11px;cursor:pointer">✓ Approve Selected</button>
     <button onclick="bulkSentSelected()" style="background:#fff;color:var(--teal);border:none;border-radius:4px;padding:4px 12px;font-weight:700;font-size:11px;cursor:pointer">✉ Mark Selected Sent</button>
+    <span style="display:flex;align-items:center;gap:5px;font-size:11px">
+      <label style="opacity:0.85">Lease Start:</label>
+      <input type="date" id="bulk-lease-start" style="font-size:11px;padding:2px 5px;border-radius:3px;border:none;font-family:var(--f)">
+      <button onclick="bulkSetLeaseStart()" style="background:#fff;color:var(--teal);border:none;border-radius:4px;padding:4px 10px;font-weight:700;font-size:11px;cursor:pointer">Set Date</button>
+    </span>
     <button onclick="selectedRows.clear();renderTable();updateBulkBar()" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.5);border-radius:4px;padding:4px 10px;font-size:11px;cursor:pointer">Clear</button>
   </div>
   <div class="exp-panel" id="exp-panel">
@@ -676,23 +681,13 @@ async function loadUnitsForEntity(entityKey){
     };
   });
 
-  // THEN: apply locked terms to approved/sent units
-  activeUnits.forEach(u=>{
-    const dec = decisions[String(u.unitId||'')];
-    if(dec && dec.lockedTermsJSON){
-      try{
-        const lt = JSON.parse(dec.lockedTermsJSON);
-        if(lt.targets) u.lockedTargets = lt.targets;
-        if(lt.mtmType) u.lockedMTMType = lt.mtmType;
-        if(lt.mtmPct!==undefined) u.lockedMTMPct = lt.mtmPct;
-        if(lt.mtmFlatFee!==undefined) u.lockedMTMFlatFee = lt.mtmFlatFee;
-      } catch(e){}
-    }
-  });
-
-  // THEN: auto-flag AppFolio pending renewal offers
+  // THEN: auto-flag AppFolio pending renewal offers and non-renews
   activeUnits.forEach(u=>{
     if(u.afRenewalStatus==='Pending' && u.status==='pending') u.status='af_pending';
+    if(u.afNonRenew && u.status==='pending'){
+      u.status='nr';
+      u.nrReason='Non-renewal indicated in AppFolio';
+    }
   });
 
   // Map to internal format
@@ -730,10 +725,11 @@ async function loadUnitsForEntity(entityKey){
       uSize: f.UnitSize||'',
       s8: !!f.HasS8Charge,
       afRenewalStatus: f.AFRenewalStatus||'',
-      lockedTargets: null,
-      lockedMTMType: null,
-      lockedMTMPct: null,
-      lockedMTMFlatFee: null,
+      afNonRenew: f.AFNonRenew===true || (f.LeaseStatus||'').toLowerCase().includes('notice'),
+      lockedTargets: (()=>{ if(!dec?.lockedTermsJSON) return null; try{ const lt=JSON.parse(dec.lockedTermsJSON); return lt.targets||null; }catch(e){return null;} })(),
+      lockedMTMType: (()=>{ if(!dec?.lockedTermsJSON) return null; try{ const lt=JSON.parse(dec.lockedTermsJSON); return lt.mtmType||null; }catch(e){return null;} })(),
+      lockedMTMPct: (()=>{ if(!dec?.lockedTermsJSON) return null; try{ const lt=JSON.parse(dec.lockedTermsJSON); return lt.mtmPct!==undefined?lt.mtmPct:null; }catch(e){return null;} })(),
+      lockedMTMFlatFee: (()=>{ if(!dec?.lockedTermsJSON) return null; try{ const lt=JSON.parse(dec.lockedTermsJSON); return lt.mtmFlatFee!==undefined?lt.mtmFlatFee:null; }catch(e){return null;} })(),
       proposedLeaseStart: dec?.proposedLeaseStart||'',
       notes: dec?.notes||'',
       status: dec?.status||'pending',
@@ -858,6 +854,18 @@ function updateBulkBar(){
   const cnt = document.getElementById('sel-count');
   if(cnt) cnt.textContent = n + ' selected';
 }
+function bulkSetLeaseStart(){
+  const dateVal = document.getElementById('bulk-lease-start')?.value;
+  if(!dateVal){ showToast('Pick a date first.', true); return; }
+  const toSet = [...selectedRows].filter(ri => activeUnits[ri]);
+  toSet.forEach(ri => {
+    activeUnits[ri].proposedLeaseStart = dateVal;
+    saveDecision(ri);
+  });
+  renderTable();
+  showToast(toSet.length + ' units updated with lease start ' + dateVal);
+}
+
 function bulkApproveSelected(){
   const toApprove = [...selectedRows].filter(ri=>{
     const u=activeUnits[ri];
@@ -895,6 +903,38 @@ function getSortValue(u){
   return 0;
 }
 
+
+// ── APPFOLIO SYNC (triggers Power Automate flow via HTTP) ────────────
+const AF_FLOW_TRIGGER_URL = ''; // Set this after adding HTTP trigger to Flow 1
+
+async function triggerAFSync(){
+  const btn = document.getElementById('af-sync-btn');
+  if(!btn) return;
+
+  // If no trigger URL configured, show instructions
+  if(!AF_FLOW_TRIGGER_URL){
+    showToast('AppFolio Sync: Add an HTTP trigger to Flow 1 in Power Automate, then set AF_FLOW_TRIGGER_URL in the app.', true);
+    return;
+  }
+
+  btn.textContent='⏳ Syncing...';
+  btn.disabled=true;
+  try{
+    const r = await fetch(AF_FLOW_TRIGGER_URL, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'renewal-manager'})});
+    if(r.ok || r.status===202){
+      showToast('AppFolio sync triggered. Data will update in ~10 minutes. Refresh then.');
+      btn.textContent='✓ Sync Sent';
+      setTimeout(()=>{btn.textContent='🔄 AppFolio Sync';btn.disabled=false;},5000);
+    } else {
+      throw new Error('HTTP '+r.status);
+    }
+  } catch(e){
+    showToast('Sync trigger failed: '+e.message+'. Run Flow 1 manually in Power Automate.', true);
+    btn.textContent='🔄 AppFolio Sync';
+    btn.disabled=false;
+  }
+}
+
 // ── METRICS ──────────────────────────────────────────────────
 function updateMetrics(){
   const units=activeUnits.filter(u=>u.st!=='vacant');
@@ -927,7 +967,14 @@ function calcOffer(u,ti){
   const inc=t.type==='pct'?base*(t.val/100):t.val;
   const prop=base+ltl+inc;
   const amiMax=getAMIMax(u);
-  return{v:Math.round(prop*100)/100,d:Math.round((prop-base)*100)/100,overAMI:amiMax>0&&prop>amiMax,amiMax,mos:termMos(u.ey,u.em,t.yr,t.mo)};
+  const today=new Date();
+  const isMTMPast=u.st==='mtm'&&(u.ey<today.getFullYear()||(u.ey===today.getFullYear()&&u.em<=today.getMonth()+1));
+  let ey,em;
+  if(isMTMPast){
+    if(u.proposedLeaseStart){const ls=new Date(u.proposedLeaseStart);ey=ls.getFullYear();em=ls.getMonth()+1;}
+    else{ey=today.getFullYear();em=today.getMonth()+1;}
+  } else {ey=u.ey;em=u.em;}
+  return{v:Math.round(prop*100)/100,d:Math.round((prop-base)*100)/100,overAMI:amiMax>0&&prop>amiMax,amiMax,mos:termMos(ey,em,t.yr,t.mo)};
 }
 function calcMTM(u){
   const base=u.curr,ltl=u.mkt>base?u.mkt-base:0;
@@ -1201,7 +1248,19 @@ function renderTable(){
       const inc=t.type==='pct'?base*(t.val/100):t.val;
       const prop=Math.round((base+ltl+inc)*100)/100;
       const d=Math.round((prop-base)*100)/100;
-      const mos=termMos(u.ey,u.em,t.yr,t.mo);
+      // For MTM units: use proposedLeaseStart if set, else today
+      const today = new Date();
+      const isMTMBase = u.st==='mtm' && (u.ey < today.getFullYear() || (u.ey===today.getFullYear() && u.em<=today.getMonth()+1));
+      let baseEy, baseEm;
+      if(isMTMBase){
+        if(u.proposedLeaseStart){
+          const ls = new Date(u.proposedLeaseStart);
+          baseEy = ls.getFullYear(); baseEm = ls.getMonth()+1;
+        } else {
+          baseEy = today.getFullYear(); baseEm = today.getMonth()+1;
+        }
+      } else { baseEy=u.ey; baseEm=u.em; }
+      const mos=termMos(baseEy,baseEm,t.yr,t.mo);
       const amiMax=getAMIMax(u);
       const overAMI=amiMax>0&&prop>amiMax;
       if(mos<=0||mos>36){tgtCells+='<td class="tco"><span class="ona">n/a</span></td>';return;}
@@ -1307,7 +1366,10 @@ async function saveDecision(ri){
       decisions[uid]={spId:r.id,status:u.status,nrReason:u.nrReason,notes:u.notes,isMTMOnly:u.mtmOnly};
     }
     showToast('Saved.');
-  } catch(e){showToast('Save failed: '+e.message,true);}
+  } catch(e){
+    const msg = e.message?.includes('403') ? 'Save failed: You need Contribute access to NS_Renewal_Decisions in SharePoint. Ask your admin.' : 'Save failed: '+e.message;
+    showToast(msg,true);
+  }
 }
 
 function saveNotes(ri,val){
