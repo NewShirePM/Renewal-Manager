@@ -706,7 +706,8 @@ async function loadUnitsForEntity(entityKey){
       sentDate: f.OfferSentDate||null,
       offeredTerms: safeJSON(f.OfferedTermsJSON, []),
       lockedTermsJSON: f.LockedTermsJSON||'',
-      proposedLeaseStart: f.ProposedLeaseStart||''
+      proposedLeaseStart: f.ProposedLeaseStart||'',
+      leaseEndDate: (f.LeaseEndDate||'').substring(0,10)
     };
   });
 
@@ -757,10 +758,14 @@ async function loadUnitsForEntity(entityKey){
       status: (()=>{
         const afNR=f.AFNonRenew===true||(f.LeaseStatus||'').includes('Notice');
         const afPending=(f.AFRenewalStatus||'')==='Pending';
-        // AppFolio status takes priority
+        // If lease end date changed → resident renewed, reset
+        const _newEnd=(f.HasS8Charge&&f.EligibleForRentIncreaseOn)?f.EligibleForRentIncreaseOn.substring(0,10):(f.LeaseEndDate||'').substring(0,10);
+        if(dec&&dec.leaseEndDate&&_newEnd&&_newEnd!==dec.leaseEndDate&&(dec.status==='sent'||dec.status==='approved')){
+          setTimeout(()=>clearDecision(dec.spId),0);
+          return 'pending';
+        }
         if(afPending) return 'af_pending';
         if(afNR) return 'nr';
-        // Fall back to what was saved in SharePoint
         return dec?.status||'pending';
       })(),
       mtmOnly: dec?.isMTMOnly||false,
@@ -870,6 +875,7 @@ function toggleRowSelect(ri, checked){
   if(checked) selectedRows.add(ri);
   else selectedRows.delete(ri);
   updateBulkBar();
+  renderExposure();
 }
 function toggleSelectAll(checked){
   const vis = getVisible();
@@ -1129,6 +1135,7 @@ function renderExposure(){
   const targetMonths = activeTargets.map(t=>t.yr+'-'+t.mo);
 
   const vals = months.map(m=>counts[m.yr+'-'+m.mo]||0);
+
   // Count approved+sent per target month for this portfolio
   const sentByMonth={};
   months.forEach(m=>{sentByMonth[m.yr+'-'+m.mo]=0;});
@@ -1143,7 +1150,19 @@ function renderExposure(){
     try{const lt=JSON.parse(f.LockedTermsJSON);(lt.targets||[]).forEach(t=>{const k=t.yr+'-'+t.mo;if(sentByMonth[k]!==undefined)sentByMonth[k]++;});}catch(e){}
   });
   const sentVals=months.map(m=>sentByMonth[m.yr+'-'+m.mo]||0);
-  const maxVal = Math.max(...vals, ...targets, ...sentVals, 1);
+
+  // Gold selected preview
+  const selByMonth={};
+  months.forEach(m=>{selByMonth[m.yr+'-'+m.mo]=0;});
+  [...selectedRows].forEach(ri=>{
+    const u=activeUnits[ri];
+    if(!u||u.status==='nr'||u.status==='af_pending'||u.st==='evict') return;
+    const tgts=u.lockedTargets||activeTargets;
+    tgts.forEach(t=>{const k=t.yr+'-'+t.mo;if(selByMonth[k]!==undefined)selByMonth[k]++;});
+  });
+  const selVals=months.map(m=>selByMonth[m.yr+'-'+m.mo]||0);
+
+  const maxVal = Math.max(...vals, ...targets, ...sentVals, ...selVals, 1);
 
   // SVG chart
   const W=1400, H=130, padL=32, padR=8, padT=12, padB=36;
@@ -1161,15 +1180,16 @@ function renderExposure(){
     return `${x},${y}`;
   }).join(' ');
 
-  // Bars
+  // Stacked bars: expirations + sent/approved + selected preview
   const bars = months.map((m,i)=>{
-    const v=vals[i];const sv=sentVals[i];const t=targets[i];
-    const isTargetMo=targetMonths.includes(m.yr+'-'+m.mo);
-    const isCurrent=(m.yr===today.getFullYear()&&m.mo===today.getMonth()+1);
-    const expFill=isCurrent?'#4A78B0':isTargetMo?'#CDA04B':'#D0D8DC';
+    const v=vals[i];const sv=sentVals[i];const slv=selVals[i];const t=targets[i];
+    const isTargetMo = targetMonths.includes(m.yr+'-'+m.mo);
+    const isCurrent = (m.yr===today.getFullYear()&&m.mo===today.getMonth()+1);
+    const expFill = isCurrent?'#4A78B0':isTargetMo?'#CDA04B':'#D0D8DC';
     const x=padL+i*(barW+barGap);
     const expH=Math.max(2,Math.round((v/maxVal)*chartH));
     const sentH=Math.max(0,Math.round((sv/maxVal)*chartH));
+    const selH=Math.max(0,Math.round((slv/maxVal)*chartH));
     const yBase=padT+chartH;
     const gap=Math.ceil(t-v);
     const gapTxt=gap>0?`+${gap}`:(gap<0?`${gap}`:'✓');
@@ -1177,10 +1197,12 @@ function renderExposure(){
     return `
       <rect x="${x}" y="${yBase-expH}" width="${barW}" height="${expH}" fill="${expFill}" rx="2"><title>${m.label}: ${v} expiring / target ${Math.round(t)}</title></rect>
       ${sentH>0?`<rect x="${x}" y="${yBase-expH-sentH}" width="${barW}" height="${sentH}" fill="#2D8A5A" rx="2" opacity="0.85"><title>${m.label}: ${sv} approved/sent</title></rect>`:''}
+      ${selH>0?`<rect x="${x}" y="${yBase-expH-sentH-selH}" width="${barW}" height="${selH}" fill="#CDA04B" rx="2" opacity="0.9"><title>${m.label}: ${slv} selected (preview)</title></rect>`:''}
       <text x="${x+barW/2}" y="${H-padB+13}" text-anchor="middle" font-size="9" fill="#7A8585">${m.label}</text>
       <text x="${x+barW/2}" y="${H-padB+24}" text-anchor="middle" font-size="8" fill="${gapCol}" font-weight="600">${gapTxt}</text>
       ${v>0?`<text x="${x+barW/2}" y="${yBase-expH-3}" text-anchor="middle" font-size="9" fill="#28434C" font-weight="600">${v}</text>`:''}
       ${sentH>0?`<text x="${x+barW/2}" y="${yBase-expH-sentH-3}" text-anchor="middle" font-size="8" fill="#2D8A5A" font-weight="700">${sv}</text>`:''}
+      ${selH>0?`<text x="${x+barW/2}" y="${yBase-expH-sentH-selH-3}" text-anchor="middle" font-size="8" fill="#9E7B2F" font-weight="700">${slv}</text>`:''}
     `;
   }).join('');
 
@@ -1209,7 +1231,8 @@ function renderExposure(){
     <div class="exp-leg"><div class="exp-dot" style="background:#4A78B0"></div>Current month</div>
     <div class="exp-leg"><div class="exp-dot" style="background:#CDA04B"></div>Target months</div>
     <div class="exp-leg"><div class="exp-dot" style="background:#D0D8DC"></div>Future months</div>
-    <div class="exp-leg"><div class="exp-dot" style="background:#2D8A5A"></div>Approved/Sent (stacked)</div>
+    <div class="exp-leg"><div class="exp-dot" style="background:#2D8A5A"></div>Approved/Sent</div>
+    <div class="exp-leg"><div class="exp-dot" style="background:#CDA04B;opacity:0.9"></div>Selected (preview)</div>
     <div class="exp-leg" style="gap:6px"><svg width="20" height="10"><polyline points="0,5 20,5" stroke="#9E7B2F" stroke-width="2" stroke-dasharray="4,2"/></svg>Target # (stagger)</div>
   `;
 }
@@ -1579,9 +1602,22 @@ function renderTable(){
         <button style="background:#2D6A4F;color:#fff;border:none;padding:3px 9px;border-radius:4px;font-size:10px;cursor:pointer;margin-left:4px" onclick="rescindNonRenew(${ri})">↩ Rescind</button>
       </div>`;}
     else if(u.status==='af_pending'){sc=`<div class="st-cell"><span class="chip" style="background:#1A4A6B;color:#fff;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700">✓ Offer Sent in AF</span></div>`;}
-    else if(u.status==='pending'){sc=`<div class="st-cell"><div style="display:flex;gap:5px"><button class="st-pend" onclick="setUnitStatus(${ri},'approved')">Approve</button><button class="nr-btn" onclick="setUnitStatus(${ri},'nr')">Non-Renew</button></div></div>`;}
+    else if(u.status==='pending'){
+      // For MTM pending: show last reviewed date if available
+      const mtmReviewInfo = isMTM && u.sentDate ? (()=>{
+        const days=Math.round((new Date()-new Date(u.sentDate))/86400000);
+        const col=days>365?'var(--er)':days>180?'var(--wa)':'var(--g4)';
+        return `<div style="font-size:9px;color:${col};margin-bottom:3px">Last sent: ${days}d ago (${new Date(u.sentDate).toLocaleDateString()})</div>`;
+      })() : (isMTM ? '<div style="font-size:9px;color:var(--wa);margin-bottom:3px">⚠ Never sent</div>' : '');
+      sc=`<div class="st-cell">${mtmReviewInfo}<div style="display:flex;gap:5px"><button class="st-pend" onclick="setUnitStatus(${ri},'approved')">Approve</button><button class="nr-btn" onclick="setUnitStatus(${ri},'nr')">Non-Renew</button></div></div>`;
+    }
     else if(u.status==='approved'){sc=`<div class="st-cell"><span class="st-appr">✓ Approved</span><button class="mark-sent" onclick="setUnitStatus(${ri},'sent')">Mark Sent</button><button class="revert-btn" onclick="setUnitStatus(${ri},'pending')">↩ Revert</button></div>`;}
-    else{const sd=u.sentDate?new Date(u.sentDate).toLocaleDateString():'';sc=`<div class="st-cell"><span class="st-sent">${sd?'✓ Sent on '+sd:'✓ Sent'}</span><button class="revert-btn" onclick="setUnitStatus(${ri},'approved')">↩ Revert</button></div>`;}
+    else{
+      const sd=u.sentDate?new Date(u.sentDate).toLocaleDateString():'';
+      const mtmSentDays = isMTM&&u.sentDate?Math.round((new Date()-new Date(u.sentDate))/86400000):null;
+      const mtmSentInfo = mtmSentDays!==null?`<div style="font-size:9px;color:${mtmSentDays>365?'var(--er)':mtmSentDays>180?'var(--wa)':'var(--g4)'}">${mtmSentDays}d since last increase</div>`:'';
+      sc=`<div class="st-cell"><span class="st-sent">${sd?'✓ Sent on '+sd:'✓ Sent'}</span><button class="revert-btn" onclick="setUnitStatus(${ri},'approved')">↩ Revert</button>${mtmSentInfo}</div>`;
+    }
 
     const tr=document.createElement('tr');
     if(isMTM)tr.className='row-mtm';if(isEv)tr.className='row-ev';if(isNR)tr.className='row-nr';
@@ -1606,6 +1642,17 @@ function renderTable(){
 }
 
 // ── STATUS ACTIONS ────────────────────────────────────────────
+
+
+async function clearDecision(spId){
+  if(!spId) return;
+  try{
+    await updateItem('NS_Renewal_Decisions', spId, {
+      DecisionStatus:'Pending', LockedTermsJSON:'',
+      ApprovedDate:null, OfferSentDate:null
+    });
+  } catch(e){ console.warn('clearDecision failed:', e.message); }
+}
 
 async function rescindNonRenew(ri){
   const u = activeUnits[ri];
