@@ -754,6 +754,8 @@ async function loadUnitsForEntity(entityKey){
       lockedMTMPct: (()=>{ if(!dec?.lockedTermsJSON) return null; try{ const lt=JSON.parse(dec.lockedTermsJSON); return lt.mtmPct!==undefined?lt.mtmPct:null; }catch(e){return null;} })(),
       lockedMTMFlatFee: (()=>{ if(!dec?.lockedTermsJSON) return null; try{ const lt=JSON.parse(dec.lockedTermsJSON); return lt.mtmFlatFee!==undefined?lt.mtmFlatFee:null; }catch(e){return null;} })(),
       proposedLeaseStart: dec?.proposedLeaseStart||'',
+      sentDate: dec?.sentDate||null,
+      approvedDate: dec?.approvedDate||null,
       notes: dec?.notes||'',
       status: (()=>{
         const afNR=f.AFNonRenew===true||(f.LeaseStatus||'').includes('Notice');
