@@ -371,7 +371,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
     </div>
     <div class="bulkbar">
       <span class="bulknote" id="bulk-note">—</span>
-      <button class="bulk-btn" onclick="bulkApprove()">✓ Approve All Visible</button>
+      
       <button class="bsec" style="font-size:11px;padding:5px 13px" onclick="bulkUnapprove()">Reset Pending</button>
     </div>
   </div>
@@ -1129,7 +1129,21 @@ function renderExposure(){
   const targetMonths = activeTargets.map(t=>t.yr+'-'+t.mo);
 
   const vals = months.map(m=>counts[m.yr+'-'+m.mo]||0);
-  const maxVal = Math.max(...vals, ...targets, 1);
+  // Count approved+sent per target month for this portfolio
+  const sentByMonth={};
+  months.forEach(m=>{sentByMonth[m.yr+'-'+m.mo]=0;});
+  const _eOwner=allSettings[currentEntity]?.ownerName||'';
+  const _eName=allSettings[currentEntity]?.name||'';
+  allDecisionsCache.forEach(item=>{
+    const f=item.fields;
+    if(!f.LockedTermsJSON) return;
+    if(f.OwnerName!==_eOwner&&f.PropertyName!==_eName&&f.OwnerName!==_eName) return;
+    const st=(f.DecisionStatus||'').toLowerCase();
+    if(st!=='approved'&&st!=='sent'&&st!=='af sent') return;
+    try{const lt=JSON.parse(f.LockedTermsJSON);(lt.targets||[]).forEach(t=>{const k=t.yr+'-'+t.mo;if(sentByMonth[k]!==undefined)sentByMonth[k]++;});}catch(e){}
+  });
+  const sentVals=months.map(m=>sentByMonth[m.yr+'-'+m.mo]||0);
+  const maxVal = Math.max(...vals, ...targets, ...sentVals, 1);
 
   // SVG chart
   const W=1400, H=130, padL=32, padR=8, padT=12, padB=36;
@@ -1149,24 +1163,24 @@ function renderExposure(){
 
   // Bars
   const bars = months.map((m,i)=>{
-    const v=vals[i];
-    const t=targets[i];
-    const isTargetMo = targetMonths.includes(m.yr+'-'+m.mo);
-    const isCurrent = (m.yr===today.getFullYear()&&m.mo===today.getMonth()+1);
-    const fill = isCurrent?'#4A78B0':isTargetMo?'#CDA04B':'#D0D8DC';
+    const v=vals[i];const sv=sentVals[i];const t=targets[i];
+    const isTargetMo=targetMonths.includes(m.yr+'-'+m.mo);
+    const isCurrent=(m.yr===today.getFullYear()&&m.mo===today.getMonth()+1);
+    const expFill=isCurrent?'#4A78B0':isTargetMo?'#CDA04B':'#D0D8DC';
     const x=padL+i*(barW+barGap);
-    const barH=Math.max(2,Math.round((v/maxVal)*chartH));
-    const y=padT+chartH-barH;
+    const expH=Math.max(2,Math.round((v/maxVal)*chartH));
+    const sentH=Math.max(0,Math.round((sv/maxVal)*chartH));
+    const yBase=padT+chartH;
     const gap=Math.ceil(t-v);
-    const gapTxt=gap>0?`+${gap} needed`:(gap<0?`${Math.abs(gap)} over`:'✓');
-    const gapCol=gap>0?'#C44B3B':gap<0?'#2D8A5A':'#2D8A5A';
+    const gapTxt=gap>0?`+${gap}`:(gap<0?`${gap}`:'✓');
+    const gapCol=gap>0?'#C44B3B':'#2D8A5A';
     return `
-      <rect x="${x}" y="${y}" width="${barW}" height="${barH}" fill="${fill}" rx="2">
-        <title>${m.label}: ${v} actual / ${Math.round(t)} target${gap>0?' ('+gap+' needed)':gap<0?' ('+(Math.abs(gap))+' over)':' (on target)'}</title>
-      </rect>
+      <rect x="${x}" y="${yBase-expH}" width="${barW}" height="${expH}" fill="${expFill}" rx="2"><title>${m.label}: ${v} expiring / target ${Math.round(t)}</title></rect>
+      ${sentH>0?`<rect x="${x}" y="${yBase-expH-sentH}" width="${barW}" height="${sentH}" fill="#2D8A5A" rx="2" opacity="0.85"><title>${m.label}: ${sv} approved/sent</title></rect>`:''}
       <text x="${x+barW/2}" y="${H-padB+13}" text-anchor="middle" font-size="9" fill="#7A8585">${m.label}</text>
       <text x="${x+barW/2}" y="${H-padB+24}" text-anchor="middle" font-size="8" fill="${gapCol}" font-weight="600">${gapTxt}</text>
-      ${v>0?`<text x="${x+barW/2}" y="${y-3}" text-anchor="middle" font-size="9" fill="#28434C" font-weight="600">${v}</text>`:''}
+      ${v>0?`<text x="${x+barW/2}" y="${yBase-expH-3}" text-anchor="middle" font-size="9" fill="#28434C" font-weight="600">${v}</text>`:''}
+      ${sentH>0?`<text x="${x+barW/2}" y="${yBase-expH-sentH-3}" text-anchor="middle" font-size="8" fill="#2D8A5A" font-weight="700">${sv}</text>`:''}
     `;
   }).join('');
 
@@ -1193,8 +1207,9 @@ function renderExposure(){
   // Updated legend
   expLegend.innerHTML = `
     <div class="exp-leg"><div class="exp-dot" style="background:#4A78B0"></div>Current month</div>
-    <div class="exp-leg"><div class="exp-dot" style="background:#CDA04B"></div>Target offer months</div>
+    <div class="exp-leg"><div class="exp-dot" style="background:#CDA04B"></div>Target months</div>
     <div class="exp-leg"><div class="exp-dot" style="background:#D0D8DC"></div>Future months</div>
+    <div class="exp-leg"><div class="exp-dot" style="background:#2D8A5A"></div>Approved/Sent (stacked)</div>
     <div class="exp-leg" style="gap:6px"><svg width="20" height="10"><polyline points="0,5 20,5" stroke="#9E7B2F" stroke-width="2" stroke-dasharray="4,2"/></svg>Target # (stagger)</div>
   `;
 }
