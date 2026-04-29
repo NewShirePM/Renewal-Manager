@@ -1081,6 +1081,8 @@ function renderExposure(){
   const s = allSettings[currentEntity];
   const units = activeUnits.filter(u=>u.st!=='vacant');
   const total = units.length;
+  // Use TotalUnits from settings for stagger target (includes vacant/notice units)
+  const totalForTarget = s?.totalUnits || total;
   if(!total){ expPanel.style.display='none'; return; }
   expPanel.style.display='';
 
@@ -1123,7 +1125,7 @@ function renderExposure(){
 
   // Target = totalUnits * staggerPct for that month
   const stagger = s?.staggerPcts||Array(12).fill(0.083);
-  const targets = months.map(m=>(stagger[m.moIdx]||0.083)*total);
+  const targets = months.map(m=>(stagger[m.moIdx]||0.083)*totalForTarget);
   const targetMonths = activeTargets.map(t=>t.yr+'-'+t.mo);
 
   const vals = months.map(m=>counts[m.yr+'-'+m.mo]||0);
@@ -1207,8 +1209,6 @@ function kpi(label,val,sub='',color='var(--teal)'){
 async function loadAllDecisions(){
   try{
     allDecisionsCache = await getAllItems('NS_Renewal_Decisions');
-    // Re-render exposure chart now that sent data is available
-    if(currentEntity) renderExposure();
   } catch(e){ console.warn('Could not load all decisions:', e.message); }
 }
 
@@ -1343,7 +1343,20 @@ function renderDashChart(months, expByMonth, sentByMonth){
   const barW=Math.floor(chartW/months.length)-3, barGap=3;
   const vals = months.map(m=>expByMonth[m.yr+'-'+m.mo]||0);
   const svals = months.map(m=>sentByMonth[m.yr+'-'+m.mo]||0);
-  const maxVal = Math.max(...vals, ...svals, 1);
+
+  // Company-wide target line: avg stagger across all portfolios * total units
+  const allEntities = Object.values(allSettings);
+  const companyTotal = allEntities.reduce((sum,s)=>sum+(s.totalUnits||0),0);
+  const avgStagger = Array(12).fill(0);
+  let entityCount = 0;
+  allEntities.forEach(s=>{
+    if(!s.staggerPcts||!s.totalUnits) return;
+    entityCount++;
+    s.staggerPcts.forEach((pct,i)=>{ avgStagger[i]+=(pct||0.083)*s.totalUnits; });
+  });
+  const dashTargets = months.map(m=>avgStagger[m.moIdx]||0);
+
+  const maxVal = Math.max(...vals, ...svals, ...dashTargets, 1);
   const yScale = v => chartH - Math.round((v/maxVal)*chartH);
   const today = new Date();
 
@@ -1364,14 +1377,31 @@ function renderDashChart(months, expByMonth, sentByMonth){
     `;
   }).join('');
 
+  // Target line points
+  const linePoints = months.map((m,i)=>{
+    const x=padL+i*(barW+barGap)+barW/2;
+    const y=padT+yScale(dashTargets[i]);
+    return `${x},${y}`;
+  }).join(' ');
+  const dots = months.map((m,i)=>{
+    const x=padL+i*(barW+barGap)+barW/2;
+    const y=padT+yScale(dashTargets[i]);
+    return `<circle cx="${x}" cy="${y}" r="3" fill="#CDA04B" stroke="#9E7B2F" stroke-width="1"/>`;
+  }).join('');
+
   const chart = document.getElementById('dash-chart');
-  if(chart) chart.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px;min-width:${W}px">${bars}</svg>`;
+  if(chart) chart.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px;min-width:${W}px">
+    ${bars}
+    <polyline points="${linePoints}" fill="none" stroke="#9E7B2F" stroke-width="2" stroke-dasharray="5,3"/>
+    ${dots}
+  </svg>`;
 
   const legend = document.getElementById('dash-legend');
   if(legend) legend.innerHTML = `
     <div class="exp-leg"><div class="exp-dot" style="background:#4A78B0"></div>Current month</div>
     <div class="exp-leg"><div class="exp-dot" style="background:#D0D8DC"></div>Expiring (all portfolios)</div>
     <div class="exp-leg"><div class="exp-dot" style="background:#2D8A5A"></div>Renewals sent (company-wide)</div>
+    <div class="exp-leg" style="gap:6px"><svg width="20" height="10"><polyline points="0,5 20,5" stroke="#9E7B2F" stroke-width="2" stroke-dasharray="4,2"/></svg>Target # (weighted avg stagger)</div>
   `;
 }
 
