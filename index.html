@@ -760,15 +760,28 @@ async function loadUnitsForEntity(entityKey){
       status: (()=>{
         const afNR=f.AFNonRenew===true||(f.LeaseStatus||'').includes('Notice');
         const afPending=(f.AFRenewalStatus||'')==='Pending';
-        // If lease end date changed → resident renewed, reset
-        const _newEnd=(f.HasS8Charge&&f.EligibleForRentIncreaseOn)?f.EligibleForRentIncreaseOn.substring(0,10):(f.LeaseEndDate||'').substring(0,10);
-        if(dec&&dec.leaseEndDate&&_newEnd&&_newEnd!==dec.leaseEndDate&&(dec.status==='sent'||dec.status==='approved')){
-          setTimeout(()=>clearDecision(dec.spId),0);
+        // Resident-renewed detection: lease end date moved FORWARD by ≥30 days
+        // in AppFolio. Parsed as Date objects to avoid timezone substring drift.
+        // Backward moves, ≤30-day drift, or missing values are ignored.
+        const _pd = s => { const m=s&&String(s).substring(0,10).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m?new Date(+m[1],+m[2]-1,+m[3]):null; };
+        const _newEndStr=(f.HasS8Charge&&f.EligibleForRentIncreaseOn)?f.EligibleForRentIncreaseOn.substring(0,10):(f.LeaseEndDate||'').substring(0,10);
+        const _oldEnd=_pd(dec?.leaseEndDate);
+        const _newEnd=_pd(_newEndStr);
+        const _renewed=_oldEnd&&_newEnd&&((_newEnd-_oldEnd)>=30*86400000);
+        if(_renewed&&(dec.status==='approved'||dec.status==='sent')){
+          setTimeout(()=>clearDecision(dec.spId,_newEndStr),0);
           return 'pending';
         }
+        // Local decisions win over AppFolio status — Approved/Sent/Non-Renew set
+        // in the app stay until either the user changes them or the resident's
+        // lease end date actually moves forward in AppFolio (handled above).
+        if(dec?.status==='approved'||dec?.status==='sent'||dec?.status==='nr'){
+          return dec.status;
+        }
+        // No local decision → AppFolio status fills in
         if(afPending) return 'af_pending';
         if(afNR) return 'nr';
-        return dec?.status||'pending';
+        return 'pending';
       })(),
       mtmOnly: dec?.isMTMOnly||false,
       nrReason: (()=>{
@@ -1646,13 +1659,17 @@ function renderTable(){
 // ── STATUS ACTIONS ────────────────────────────────────────────
 
 
-async function clearDecision(spId){
+async function clearDecision(spId, newLeaseEnd){
   if(!spId) return;
   try{
-    await updateItem('NS_Renewal_Decisions', spId, {
+    const fields={
       DecisionStatus:'Pending', LockedTermsJSON:'',
       ApprovedDate:null, OfferSentDate:null
-    });
+    };
+    // Update the stored LeaseEndDate so the next refresh sees the new value
+    // and doesn't re-trigger the auto-clear
+    if(newLeaseEnd) fields.LeaseEndDate=newLeaseEnd;
+    await updateItem('NS_Renewal_Decisions', spId, fields);
   } catch(e){ console.warn('clearDecision failed:', e.message); }
 }
 
