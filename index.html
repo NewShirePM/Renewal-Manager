@@ -447,6 +447,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
             <th style="min-width:80px">Deadline</th>
             <th style="min-width:90px">Approved On</th>
             <th style="min-width:70px;text-align:right">Current</th>
+            <th style="min-width:160px">Notes</th>
             <th style="min-width:175px">Action</th>
           </tr></thead>
           <tbody id="ps-body"></tbody>
@@ -2052,6 +2053,7 @@ async function loadPendingSend(){
       daysToDeadline,
       approvedDate: dec.fields.ApprovedDate||null,
       currentRent: parseFloat(f.TotalMonthlyRent)||0,
+      notes: dec.fields.UnitNotes||'',
       spId: dec.spId,
       decision: dec.fields
     });
@@ -2074,7 +2076,7 @@ async function loadPendingSend(){
 
   const tbody = document.getElementById('ps-body');
   if(rows.length === 0){
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--g4)">No approved units waiting to be sent.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--g4)">No approved units waiting to be sent.</td></tr>';
   } else {
     tbody.innerHTML = rows.map((r,i)=>{
       let dlChip;
@@ -2097,11 +2099,38 @@ async function loadPendingSend(){
         <td>${dlChip}</td>
         <td style="font-size:11px;color:var(--g4)">${apDate}</td>
         <td style="text-align:right;font-family:var(--m);font-weight:600">$${r.currentRent}</td>
+        <td><input class="ni" type="text" value="${esc(r.notes)}" placeholder="Notes…" onchange="psSaveNotes(${i},this.value)" style="width:150px"></td>
         <td><button class="mark-sent" onclick="psMarkSent(${i})">✉ Mark Sent</button> <button class="bsec" style="font-size:10px;padding:3px 8px" onclick="openPropertyReview('${r.entityKey}')">Open</button></td>
       </tr>`;
     }).join('');
   }
   document.getElementById('ps-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+let _psNotesTimers = {};
+async function psSaveNotes(idx, val){
+  const r = _psRows[idx];
+  if(!r) return;
+  r.notes = val;
+  clearTimeout(_psNotesTimers[idx]);
+  _psNotesTimers[idx] = setTimeout(async ()=>{
+    try{
+      await updateItem('NS_Renewal_Decisions', r.spId, {
+        UnitNotes: val,
+        LastUpdatedAt: new Date().toISOString()
+      });
+      // Keep local decision cache in sync so a re-render of Pending Send
+      // (or the Renewal Review for this entity) shows the saved value.
+      if(r.decision) r.decision.UnitNotes = val;
+      if(currentEntity && allSettings[currentEntity]){
+        const u = activeUnits.find(u => decisions[u.unitId]?.spId === r.spId);
+        if(u){ u.notes = val; if(decisions[u.unitId]) decisions[u.unitId].notes = val; }
+      }
+      showToast('Note saved.');
+    } catch(e){
+      showToast('Note save failed: '+e.message, true);
+    }
+  }, 800);
 }
 
 async function psMarkSent(idx){
