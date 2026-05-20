@@ -254,6 +254,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
   <div class="tabs">
     <div class="tab" onclick="showTab('dashboard',this)">📊 Dashboard</div>
     <div class="tab on" onclick="showTab('review',this)">Renewal Review</div>
+    <div class="tab" onclick="showTab('pending-send',this)">📤 Pending Send</div>
     <div class="tab" onclick="showTab('settings',this)">Settings</div>
   </div>
   <div class="tb-right">
@@ -421,6 +422,37 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
   <div class="pgf">
     <div class="pgn">NewShire Property Management · 864-686-5312 · 333 Wade Hampton Blvd, Greenville SC 29609 · NewshirePM.com</div>
     <div class="btns"><button class="bsec" onclick="exportCSV()">Export CSV</button></div>
+  </div>
+</div>
+
+<!-- PENDING SEND -->
+<div class="tc" id="tc-pending-send">
+  <div style="padding:18px 0 10px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:var(--teal)">Pending Send — All Properties</div>
+        <div style="font-size:11px;color:var(--g4);margin-top:2px">Approved offers across all portfolios waiting to be sent to residents.</div>
+      </div>
+      <div style="font-size:10px;color:var(--g4)" id="ps-updated"></div>
+    </div>
+    <div class="mbar" id="ps-metrics"></div>
+    <div class="twrap">
+      <div class="tscr">
+        <table>
+          <thead><tr>
+            <th style="min-width:180px">Property / Owner</th>
+            <th style="min-width:60px">Unit</th>
+            <th style="min-width:140px">Resident</th>
+            <th style="min-width:78px">Lease End</th>
+            <th style="min-width:80px">Deadline</th>
+            <th style="min-width:90px">Approved On</th>
+            <th style="min-width:70px;text-align:right">Current</th>
+            <th style="min-width:175px">Action</th>
+          </tr></thead>
+          <tbody id="ps-body"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1347,7 +1379,9 @@ async function loadDashboard(){
       const deadline = new Date(exp - windowDays*86400000);
       const daysToDeadline = Math.round((deadline - today)/86400000);
       
-      if(st==='pending'||st==='approved'){
+      // Approved offers are excluded — they've already been reviewed.
+      // Overdue/Due30 only counts what still needs review.
+      if(st==='pending'){
         if(daysToDeadline < 0) stat.overdue++;
         else if(daysToDeadline <= 30) stat.due30++;
       }
@@ -1374,8 +1408,8 @@ async function loadDashboard(){
 
   document.getElementById('dash-kpis').innerHTML =
     kpi('Total Units',totals.total)+
-    kpi('Overdue',totals.overdue,'no offer sent',totals.overdue>0?'var(--er)':'var(--g4)')+
-    kpi('Due ≤30d',totals.due30,'need action',totals.due30>0?'var(--wa)':'var(--g4)')+
+    kpi('Overdue',totals.overdue,'pending review',totals.overdue>0?'var(--er)':'var(--g4)')+
+    kpi('Due ≤30d',totals.due30,'pending review',totals.due30>0?'var(--wa)':'var(--g4)')+
     kpi('Pending',totals.pending,'',totals.pending>0?'var(--wa)':'var(--g4)')+
     kpi('Approved',totals.approved,'','var(--ok)')+
     kpi('Sent',totals.sent,'','var(--inf)')+
@@ -1475,9 +1509,9 @@ function renderDashCards(entityStats){
     if(s.total===0) return '';
     const sentTotal = s.sent+s.afPending;
     const attention = s.overdue>0?'border-left:3px solid var(--er)':s.due30>0?'border-left:3px solid var(--wa)':'border-left:3px solid var(--g2)';
-    return `<div style="background:var(--white);border:1px solid var(--g1);border-radius:var(--r);padding:12px;${attention}">
+    return `<div onclick="openPropertyReview('${key}')" title="Open Renewal Review for ${esc(s.name)}" style="background:var(--white);border:1px solid var(--g1);border-radius:var(--r);padding:12px;${attention};cursor:pointer;transition:box-shadow .15s,transform .15s" onmouseover="this.style.boxShadow='0 2px 10px rgba(28,55,64,.12)';this.style.transform='translateY(-1px)'" onmouseout="this.style.boxShadow='';this.style.transform=''">
       <div style="font-size:11px;font-weight:700;color:var(--teal);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
-        <span>${s.name}</span>
+        <span>${s.name} <span style="font-size:9px;color:var(--g3);font-weight:400;margin-left:4px">↗</span></span>
         <span style="font-size:9px;font-weight:400;color:var(--g4)">${s.portfolioType==='Multi-Family'?'MF':'SFR'} · ${s.total} units</span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:10px">
@@ -1933,6 +1967,167 @@ function showTab(id,tab){
   document.getElementById('tc-'+id).classList.add('on');
   tab.classList.add('on');
   if(id==='dashboard') loadDashboard();
+  if(id==='pending-send') loadPendingSend();
+}
+
+// ── OPEN PROPERTY REVIEW (from dashboard card click) ─────────
+async function openPropertyReview(key){
+  const s = allSettings[key];
+  if(!s) return;
+  const isMF = (s.portfolioType||'').toLowerCase().includes('multi');
+  const newMode = isMF?'mf':'sfr';
+  // Activate Renewal Review tab
+  document.querySelectorAll('.tc').forEach(el=>el.classList.remove('on'));
+  document.querySelectorAll('.tab').forEach(el=>el.classList.remove('on'));
+  document.getElementById('tc-review').classList.add('on');
+  document.querySelectorAll('.tab').forEach(t=>{
+    if((t.textContent||'').trim().includes('Renewal Review')) t.classList.add('on');
+  });
+  // Switch mode + selector
+  currentMode = newMode;
+  document.getElementById('rv-mf-btn').classList.toggle('on', newMode==='mf');
+  document.getElementById('rv-sfr-btn').classList.toggle('on', newMode==='sfr');
+  const keys = newMode==='mf'?getMFKeys():getSFRKeys();
+  currentEntity = key;
+  buildRvSelector(keys);
+  await loadEntity(key);
+}
+
+// ── PENDING SEND (cross-property approved-not-sent view) ─────
+let _psRows = [];
+async function loadPendingSend(){
+  document.getElementById('ps-updated').textContent = 'Loading…';
+  showLoading('Loading approved offers…');
+  let allUnits, allDecs;
+  try{
+    [allUnits, allDecs] = await Promise.all([
+      getAllItems('NS_Units_Cache'),
+      getAllItems('NS_Renewal_Decisions')
+    ]);
+  } catch(e){
+    hideLoading();
+    showToast('Failed to load: '+e.message, true);
+    return;
+  }
+  hideLoading();
+
+  const decByUnit = {};
+  allDecs.forEach(item=>{ decByUnit[String(item.fields.UnitID||'')] = {spId:item.id, fields:item.fields}; });
+
+  const today = new Date();
+  const rows = [];
+
+  allUnits.forEach(item=>{
+    const f = item.fields;
+    if((f.LeaseStatus||'').includes('Vacant')) return;
+    const uid = String(f.UnitID||item.id);
+    const dec = decByUnit[uid];
+    if(!dec) return;
+    // Only show units approved-and-not-sent. AF Sent / Sent / NR / Pending excluded.
+    if((dec.fields.DecisionStatus||'').toLowerCase() !== 'approved') return;
+
+    const isMF = (f.PortfolioType||'').toLowerCase().includes('multi') || (f.PortfolioType||'')==='MF';
+    const matchKey = isMF ? f.PropertyName : f.OwnerName;
+    const entityKey = Object.keys(allSettings).find(k => allSettings[k].ownerName === matchKey);
+    if(!entityKey) return;
+
+    const leaseEnd = (f.HasS8Charge && f.EligibleForRentIncreaseOn)
+      ? f.EligibleForRentIncreaseOn.substring(0,10)
+      : (f.LeaseEndDate||'').substring(0,10);
+    let daysToDeadline = null;
+    if(leaseEnd){
+      const exp = new Date(leaseEnd+'T12:00:00');
+      const windowDays = f.HasS8Charge?60:75;
+      const deadline = new Date(+exp - windowDays*86400000);
+      daysToDeadline = Math.round((deadline - today)/86400000);
+    }
+
+    rows.push({
+      entityKey,
+      entityName: allSettings[entityKey].name,
+      portfolioType: allSettings[entityKey].portfolioType,
+      unit: f.UnitNumber||f.PropertyName||uid,
+      resident: f.ResidentName||'Vacant',
+      leaseEnd,
+      daysToDeadline,
+      approvedDate: dec.fields.ApprovedDate||null,
+      currentRent: parseFloat(f.TotalMonthlyRent)||0,
+      spId: dec.spId,
+      decision: dec.fields
+    });
+  });
+
+  rows.sort((a,b)=>{
+    const av = a.daysToDeadline ?? 99999;
+    const bv = b.daysToDeadline ?? 99999;
+    return av-bv;
+  });
+  _psRows = rows;
+
+  const overdue = rows.filter(r=>r.daysToDeadline!==null && r.daysToDeadline<0).length;
+  const due30   = rows.filter(r=>r.daysToDeadline!==null && r.daysToDeadline>=0 && r.daysToDeadline<=30).length;
+
+  document.getElementById('ps-metrics').innerHTML =
+    `<div class="mc"><div class="mcl">Approved · Pending Send</div><div class="mcv g">${rows.length}</div></div>`+
+    `<div class="mc"><div class="mcl">Overdue</div><div class="mcv r">${overdue}</div></div>`+
+    `<div class="mc"><div class="mcl">Due ≤30d</div><div class="mcv a">${due30}</div></div>`;
+
+  const tbody = document.getElementById('ps-body');
+  if(rows.length === 0){
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--g4)">No approved units waiting to be sent.</td></tr>';
+  } else {
+    tbody.innerHTML = rows.map((r,i)=>{
+      let dlChip;
+      if(r.daysToDeadline===null) dlChip='<span class="chip chn">—</span>';
+      else if(r.daysToDeadline<0)  dlChip=`<span class="chip chr">Overdue ${Math.abs(r.daysToDeadline)}d</span>`;
+      else if(r.daysToDeadline<=14)dlChip=`<span class="chip chr">${r.daysToDeadline}d left</span>`;
+      else if(r.daysToDeadline<=45)dlChip=`<span class="chip cha">${r.daysToDeadline}d left</span>`;
+      else                          dlChip=`<span class="chip chg">${r.daysToDeadline}d left</span>`;
+      const apDate = r.approvedDate ? new Date(r.approvedDate).toLocaleDateString() : '—';
+      let leaseStr = '—';
+      if(r.leaseEnd){
+        const m = r.leaseEnd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if(m) leaseStr = `${m[2]}/${m[3]}/${m[1].slice(2)}`;
+      }
+      return `<tr>
+        <td><a onclick="openPropertyReview('${r.entityKey}')" style="color:var(--teal);text-decoration:underline;cursor:pointer;font-weight:600">${esc(r.entityName)}</a><div style="font-size:9px;color:var(--g4)">${r.portfolioType==='Multi-Family'?'MF':'SFR'}</div></td>
+        <td><strong style="font-family:var(--m);font-size:11px">${esc(r.unit)}</strong></td>
+        <td>${esc(r.resident)}</td>
+        <td style="font-family:var(--m);font-size:11px">${leaseStr}</td>
+        <td>${dlChip}</td>
+        <td style="font-size:11px;color:var(--g4)">${apDate}</td>
+        <td style="text-align:right;font-family:var(--m);font-weight:600">$${r.currentRent}</td>
+        <td><button class="mark-sent" onclick="psMarkSent(${i})">✉ Mark Sent</button> <button class="bsec" style="font-size:10px;padding:3px 8px" onclick="openPropertyReview('${r.entityKey}')">Open</button></td>
+      </tr>`;
+    }).join('');
+  }
+  document.getElementById('ps-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+async function psMarkSent(idx){
+  const r = _psRows[idx];
+  if(!r) return;
+  showLoading('Marking sent…');
+  try{
+    await updateItem('NS_Renewal_Decisions', r.spId, {
+      DecisionStatus: 'Sent',
+      OfferSentDate: r.decision.OfferSentDate || new Date().toISOString(),
+      LastUpdatedAt: new Date().toISOString()
+    });
+    // If this unit's entity is currently loaded in Review, refresh its decision
+    if(currentEntity && allSettings[currentEntity]){
+      const ent = allSettings[currentEntity];
+      const matchKey = ent.ownerName;
+      const wasCurrent = (r.decision.OwnerName===matchKey) || (r.decision.PropertyName===matchKey);
+      if(wasCurrent){ await loadEntity(currentEntity); }
+    }
+    hideLoading();
+    showToast('Marked sent: '+r.entityName+' · '+r.unit);
+    await loadPendingSend();
+  } catch(e){
+    hideLoading();
+    showToast('Failed: '+e.message, true);
+  }
 }
 
 // ── HELPERS ───────────────────────────────────────────────────
