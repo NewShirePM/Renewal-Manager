@@ -639,9 +639,13 @@ async function loadApp(){
     if(keys.length===0){showToast('NS_Renewal_Settings loaded 0 rows. Check the list has data and EntityKey is populated.',true);}
     else{console.log('Settings loaded:',keys.length,'entities:',keys.join(', '),JSON.stringify(allSettings));showToast('Loaded '+keys.length+' entities: '+keys.slice(0,4).join(', '));}
     hideLoading();
-    // Prepare the Renewal Review tab state in the background (selector + first
-    // entity) so it's ready when opened…
-    await switchMode("mf");
+    // Prepare the Renewal Review tab state in the background (selector + the
+    // last-viewed portfolio/property) so it's ready when opened…
+    let savedMode='mf';
+    try{ savedMode = sessionStorage.getItem('rm_mode') || 'mf'; }catch(e){}
+    if(savedMode==='sfr' && getSFRKeys().length===0) savedMode='mf';
+    if(savedMode==='mf' && getMFKeys().length===0 && getSFRKeys().length>0) savedMode='sfr';
+    await switchMode(savedMode);
     // …then show the tab the user was last on (survives refresh via
     // sessionStorage), defaulting to the Dashboard on a fresh load.
     let startTab='dashboard';
@@ -892,11 +896,14 @@ function getSFRKeys(){ return Object.keys(allSettings).filter(k=>{const p=(allSe
 
 async function switchMode(mode){
   currentMode = mode;
+  try{ sessionStorage.setItem('rm_mode', mode); }catch(e){}
   document.getElementById('rv-mf-btn').classList.toggle('on', mode==='mf');
   document.getElementById('rv-sfr-btn').classList.toggle('on', mode==='sfr');
   const keys = mode==='mf' ? getMFKeys() : getSFRKeys();
   if(keys.length===0){document.getElementById('rv-selector').innerHTML='<span style="font-size:12px;color:var(--g4)">No '+mode.toUpperCase()+' properties configured.</span>';return;}
-  currentEntity = keys[0];
+  // Honor a persisted entity if it belongs to this mode, else first in list.
+  let saved=null; try{ saved=sessionStorage.getItem('rm_entity'); }catch(e){}
+  currentEntity = (saved && keys.includes(saved)) ? saved : keys[0];
   buildRvSelector(keys);
   await loadEntity(currentEntity);
 }
@@ -915,6 +922,7 @@ async function onEntityChange(key){
 async function loadEntity(key){
   const s = allSettings[key];
   if(!s) return;
+  try{ sessionStorage.setItem('rm_entity', key); }catch(e){}
   activeTargets = JSON.parse(JSON.stringify(s.targets||[]));
   activeMTMPct = s.mtmIncreaseType==='Dollar' ? s.mtmIncreaseValue : s.mtmIncreaseValue;
   activeMTMType = s.mtmIncreaseType==='Dollar'?'dol':'pct';
@@ -2071,6 +2079,7 @@ async function openPropertyReview(key){
   try{ sessionStorage.setItem('rm_tab', 'review'); }catch(e){}
   // Switch mode + selector
   currentMode = newMode;
+  try{ sessionStorage.setItem('rm_mode', newMode); }catch(e){}
   document.getElementById('rv-mf-btn').classList.toggle('on', newMode==='mf');
   document.getElementById('rv-sfr-btn').classList.toggle('on', newMode==='sfr');
   const keys = newMode==='mf'?getMFKeys():getSFRKeys();
