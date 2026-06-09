@@ -1,0 +1,9 @@
+# Data exports — contain resident/employee PII. This repo is PUBLIC. Never commit.
+*.csv
+*.iqy
+*.xlsx
+*.xls
+
+# Local env / secrets
+.env
+*.local
