@@ -121,6 +121,8 @@ tbody tr:last-child td{border-bottom:none}
 tbody tr:hover td{background:var(--teal5)}
 tbody tr.row-mtm td{background:rgba(196,75,59,.025)}
 tbody tr.row-ev td{background:rgba(0,0,0,.02);color:var(--g4)}
+tbody tr.row-notice td{background:rgba(74,120,176,.05)}
+tbody tr.row-notice .s0,tbody tr.row-notice .s1{background:#F2F7FB}
 tbody tr.row-nr td{background:var(--nrb)}
 tbody tr.row-nr td:first-child{border-left:3px solid var(--gold);padding-left:7px}
 tbody tr.row-nr:hover td{background:#FFF2D4}
@@ -252,10 +254,10 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
   <div class="tb-logo"><img id="ns-logo" alt="NS"></div>
   <span class="tb-name">Renewal Manager</span>
   <div class="tabs">
-    <div class="tab" onclick="showTab('dashboard',this)">📊 Dashboard</div>
-    <div class="tab on" onclick="showTab('review',this)">Renewal Review</div>
-    <div class="tab" onclick="showTab('pending-send',this)">📤 Pending Send</div>
-    <div class="tab" onclick="showTab('settings',this)">Settings</div>
+    <div class="tab on" id="tab-dashboard" onclick="showTab('dashboard',this)">📊 Dashboard</div>
+    <div class="tab" id="tab-review" onclick="showTab('review',this)">Renewal Review</div>
+    <div class="tab" id="tab-pending-send" onclick="showTab('pending-send',this)">📤 Pending Send</div>
+    <div class="tab" id="tab-settings" onclick="showTab('settings',this)">Settings</div>
   </div>
   <div class="tb-right">
     <span class="tb-user"><span class="sdot"></span><span id="tb-user-name"></span></span>
@@ -266,7 +268,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
 <div class="page">
 
 <!-- RENEWAL REVIEW -->
-<div class="tc" id="tc-dashboard">
+<div class="tc on" id="tc-dashboard">
   <div style="padding:18px 0 10px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div style="font-size:15px;font-weight:700;color:var(--teal)">Portfolio Renewal Dashboard</div>
@@ -287,7 +289,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
   </div>
 </div>
 
-<div class="tc on" id="tc-review">
+<div class="tc" id="tc-review">
   <div class="prow" style="flex-direction:column;align-items:flex-start;gap:8px">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <div class="port-type">
@@ -353,11 +355,14 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
           <option value="approved">Approved</option>
           <option value="sent">Sent</option>
           <option value="nr">Non-Renew</option>
+          <option value="notice">On Notice</option>
+          <option value="evict">Eviction</option>
         </select>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:2px">
           <div style="display:flex;align-items:center;gap:4px"><div class="tog on" id="tog-mtm" onclick="this.classList.toggle('on');renderTable()"></div><span class="tl">MTM</span></div>
-          <div style="display:flex;align-items:center;gap:4px"><div class="tog" id="tog-ev" onclick="this.classList.toggle('on');renderTable()"></div><span class="tl">Evictions</span></div>
-        <div style="display:flex;align-items:center;gap:4px;margin-top:4px"><div class="tog" id="tog-nr" onclick="this.classList.toggle('on');renderTable()"></div><span class="tl">Non-Renew</span></div>
+          <div style="display:flex;align-items:center;gap:4px"><div class="tog on" id="tog-ev" onclick="this.classList.toggle('on');renderTable()"></div><span class="tl">Evictions</span></div>
+          <div style="display:flex;align-items:center;gap:4px"><div class="tog on" id="tog-notice" onclick="this.classList.toggle('on');renderTable()"></div><span class="tl">On Notice</span></div>
+        <div style="display:flex;align-items:center;gap:4px;margin-top:4px"><div class="tog on" id="tog-nr" onclick="this.classList.toggle('on');renderTable()"></div><span class="tl">Non-Renew</span></div>
         </div>
         <span class="vlbl" id="vw-lbl"></span>
       </div>
@@ -634,7 +639,14 @@ async function loadApp(){
     if(keys.length===0){showToast('NS_Renewal_Settings loaded 0 rows. Check the list has data and EntityKey is populated.',true);}
     else{console.log('Settings loaded:',keys.length,'entities:',keys.join(', '),JSON.stringify(allSettings));showToast('Loaded '+keys.length+' entities: '+keys.slice(0,4).join(', '));}
     hideLoading();
-    switchMode("mf");
+    // Prepare the Renewal Review tab state in the background (selector + first
+    // entity) so it's ready when opened…
+    await switchMode("mf");
+    // …then show the tab the user was last on (survives refresh via
+    // sessionStorage), defaulting to the Dashboard on a fresh load.
+    let startTab='dashboard';
+    try{ startTab = sessionStorage.getItem('rm_tab') || 'dashboard'; }catch(e){}
+    showTab(startTab, null);
   } catch(e){
     hideLoading();
     showToast('Error loading settings: '+e.message, true);
@@ -726,6 +738,18 @@ async function loadUnitsForEntity(entityKey){
   decisions = {};
   selectedRows.clear();
 
+  // Sticky "last sent" date per unit across ALL renewal cycles. MTM units are
+  // often last increased in a prior cycle year, whose decision row is filtered
+  // out of decItems above — so without this their last-sent date would read as
+  // "never sent" every new year. We take the most recent OfferSentDate on record.
+  const lastSentByUnit = {};
+  allDecisions.forEach(item=>{
+    const f = item.fields;
+    if(!f.OfferSentDate) return;
+    const uid = String(f.UnitID||'');
+    if(!lastSentByUnit[uid] || new Date(f.OfferSentDate) > new Date(lastSentByUnit[uid])) lastSentByUnit[uid] = f.OfferSentDate;
+  });
+
   // FIRST: populate decisions from SharePoint data
   decItems.forEach(item=>{
     const f = item.fields;
@@ -740,6 +764,8 @@ async function loadUnitsForEntity(entityKey){
       offeredTerms: safeJSON(f.OfferedTermsJSON, []),
       lockedTermsJSON: f.LockedTermsJSON||'',
       proposedLeaseStart: f.ProposedLeaseStart||'',
+      onHold: !!f.OnHold,
+      holdReason: f.HoldReason||'',
       leaseEndDate: (f.LeaseEndDate||'').substring(0,10)
     };
   });
@@ -787,8 +813,10 @@ async function loadUnitsForEntity(entityKey){
       lockedMTMPct: (()=>{ if(!dec?.lockedTermsJSON) return null; try{ const lt=JSON.parse(dec.lockedTermsJSON); return lt.mtmPct!==undefined?lt.mtmPct:null; }catch(e){return null;} })(),
       lockedMTMFlatFee: (()=>{ if(!dec?.lockedTermsJSON) return null; try{ const lt=JSON.parse(dec.lockedTermsJSON); return lt.mtmFlatFee!==undefined?lt.mtmFlatFee:null; }catch(e){return null;} })(),
       proposedLeaseStart: dec?.proposedLeaseStart||'',
-      sentDate: dec?.sentDate||null,
+      sentDate: dec?.sentDate||lastSentByUnit[uid]||null,
       approvedDate: dec?.approvedDate||null,
+      onHold: dec?.onHold||false,
+      holdReason: dec?.holdReason||'',
       notes: dec?.notes||'',
       status: (()=>{
         const afNR=f.AFNonRenew===true||(f.LeaseStatus||'').includes('Notice');
@@ -822,6 +850,7 @@ async function loadUnitsForEntity(entityKey){
         if(afNR&&!dec?.nrReason) return 'Non-renewal indicated in AppFolio';
         return dec?.nrReason||'';
       })(),
+      onNotice: (f.LeaseStatus||'').toLowerCase().includes('notice'),
       unitId: uid,
       propertyName: f.PropertyName||'',
       ownerName: f.OwnerName||'',
@@ -1026,16 +1055,22 @@ async function triggerAFSync(){
 // ── METRICS ──────────────────────────────────────────────────
 function updateMetrics(){
   const units=activeUnits.filter(u=>u.st!=='vacant');
-  const pend=units.filter(u=>u.status==='pending').length;
+  const pend=units.filter(u=>u.status==='pending'&&u.st!=='evict'&&!u.onNotice).length;
   const appr=units.filter(u=>u.status==='approved').length;
   const sent=units.filter(u=>u.status==='sent').length;
-  const nr=units.filter(u=>u.status==='nr').length;
+  const nr=units.filter(u=>u.status==='nr'&&!u.onNotice).length;
+  const notice=units.filter(u=>u.onNotice).length;
+  const evict=units.filter(u=>u.st==='evict').length;
+  const mtmDue=units.filter(u=>mtmDueForReview(u)).length;
   const s8=units.filter(u=>u.s8).length;
   document.getElementById('rv-metrics').innerHTML=
     `<div class="mc"><div class="mcl">Pending</div><div class="mcv a">${pend}</div></div>`+
     `<div class="mc"><div class="mcl">Approved</div><div class="mcv g">${appr}</div></div>`+
     `<div class="mc"><div class="mcl">Sent</div><div class="mcv g">${sent}</div></div>`+
-    `<div class="mc"><div class="mcl">Non-Renew</div><div class="mcv nr">${nr}</div></div>`+
+    (nr?`<div class="mc"><div class="mcl">Non-Renew</div><div class="mcv nr">${nr}</div></div>`:'')+
+    (notice?`<div class="mc"><div class="mcl">On Notice</div><div class="mcv t">${notice}</div></div>`:'')+
+    (evict?`<div class="mc"><div class="mcl">Eviction</div><div class="mcv r">${evict}</div></div>`:'')+
+    (mtmDue?`<div class="mc"><div class="mcl">MTM ≥12mo</div><div class="mcv r">${mtmDue}</div></div>`:'')+
     (s8?`<div class="mc"><div class="mcl">Section 8</div><div class="mcv t">${s8}</div></div>`:'')+
     `<div class="mc"><div class="mcl">Total Units</div><div class="mcv">${units.length}</div></div>`;
 }
@@ -1081,6 +1116,7 @@ function fmtDate(u){
 }
 function deadlineChip(u){
   if(u.st==='evict') return'<span class="chip chr">Eviction</span>';
+  if(u.onNotice) return'<span class="chip" style="background:var(--infb);color:var(--inf);border:1px solid var(--infd)">On Notice</span>';
   if(u.st==='mtm') return'<span class="chip chr">MTM</span>';
   if(u.status==='nr') return'<span class="chip cha">Non-Renew</span>';
   if(!u.leaseEndDate) return'<span class="chip chn">—</span>';
@@ -1093,6 +1129,27 @@ function deadlineChip(u){
   return`<span class="chip chg">${days}d left</span>`;
 }
 function esc(s){return(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+// ── MTM LAST INCREASE ─────────────────────────────────────────
+// We treat the last offer sent through this app as the last rent increase.
+function mtmDaysSinceSent(u){
+  if(!u.sentDate) return null;
+  const d=new Date(String(u.sentDate).substring(0,10)+'T12:00:00');
+  return Math.round((new Date()-d)/86400000);
+}
+function mtmDueForReview(u){
+  if(u.st!=='mtm') return false;
+  const days=mtmDaysSinceSent(u);
+  return days===null||days>365; // never sent, or last increase >12 months ago
+}
+function mtmIncreaseInfo(u){
+  if(u.st!=='mtm') return '';
+  const days=mtmDaysSinceSent(u);
+  if(days===null) return '<div style="font-size:9px;color:var(--wa);margin-bottom:3px">⚠ No increase on record — review</div>';
+  const d=new Date(String(u.sentDate).substring(0,10)+'T12:00:00');
+  const col=days>365?'var(--er)':days>180?'var(--wa)':'var(--g4)';
+  return `<div style="font-size:9px;color:${col};margin-bottom:3px">Last increase: ${d.toLocaleDateString()} · ${days}d ago${days>365?' · review':''}</div>`;
+}
 
 // ── TARGET GROUPS ─────────────────────────────────────────────
 function renderTargetGroups(){
@@ -1321,7 +1378,7 @@ async function loadDashboard(){
       name: allSettings[key].name,
       portfolioType: allSettings[key].portfolioType,
       ownerName: allSettings[key].ownerName,
-      total:0, pending:0, approved:0, sent:0, nr:0, afPending:0, overdue:0, due30:0
+      total:0, pending:0, approved:0, sent:0, nr:0, notice:0, evict:0, afPending:0, overdue:0, due30:0
     };
   });
 
@@ -1351,16 +1408,22 @@ async function loadDashboard(){
     // Status
     const decStatus = (dec?.DecisionStatus||'').toLowerCase();
     const afRS = f.AFRenewalStatus||'';
-    const afNR = f.AFNonRenew===true||(f.LeaseStatus||'').includes('Notice');
+    const ls = (f.LeaseStatus||'').toLowerCase();
+    const onNotice = ls.includes('notice');
+    const isEvict = ls.includes('evict');
     let st;
     if(afRS==='Pending') st='af_pending';
-    else if(afNR) st='nr';
+    else if(isEvict) st='evict';
+    else if(onNotice) st='notice';
+    else if(f.AFNonRenew===true) st='nr';
     else if(decStatus==='sent') st='sent';
     else if(decStatus==='approved') st='approved';
     else if(decStatus==='non-renew') st='nr';
     else st='pending';
 
     if(st==='af_pending') stat.afPending++;
+    else if(st==='evict') stat.evict++;
+    else if(st==='notice') stat.notice++;
     else if(st==='sent') stat.sent++;
     else if(st==='approved') stat.approved++;
     else if(st==='nr') stat.nr++;
@@ -1404,8 +1467,9 @@ async function loadDashboard(){
   const totals = Object.values(entityStats).reduce((acc,s)=>({
     total:acc.total+s.total, pending:acc.pending+s.pending,
     approved:acc.approved+s.approved, sent:acc.sent+s.sent+s.afPending,
-    nr:acc.nr+s.nr, overdue:acc.overdue+s.overdue, due30:acc.due30+s.due30
-  }), {total:0,pending:0,approved:0,sent:0,nr:0,overdue:0,due30:0});
+    nr:acc.nr+s.nr, notice:acc.notice+s.notice, evict:acc.evict+s.evict,
+    overdue:acc.overdue+s.overdue, due30:acc.due30+s.due30
+  }), {total:0,pending:0,approved:0,sent:0,nr:0,notice:0,evict:0,overdue:0,due30:0});
 
   document.getElementById('dash-kpis').innerHTML =
     kpi('Total Units',totals.total)+
@@ -1414,7 +1478,9 @@ async function loadDashboard(){
     kpi('Pending',totals.pending,'',totals.pending>0?'var(--wa)':'var(--g4)')+
     kpi('Approved',totals.approved,'','var(--ok)')+
     kpi('Sent',totals.sent,'','var(--inf)')+
-    kpi('Non-Renew',totals.nr,'');
+    kpi('Non-Renew',totals.nr,'')+
+    kpi('On Notice',totals.notice,'',totals.notice>0?'var(--inf)':'var(--g4)')+
+    (totals.evict?kpi('Eviction',totals.evict,'','var(--er)'):'');
 
   // Company-wide chart
   renderDashChart(months, expByMonth, sentByMonth);
@@ -1522,6 +1588,8 @@ function renderDashCards(entityStats){
         ${s.approved>0?`<div style="background:#F0FFF4;border-radius:4px;padding:5px;text-align:center"><div style="font-weight:700;color:var(--ok);font-size:14px">${s.approved}</div><div style="color:var(--ok)">Approved</div></div>`:''}
         ${sentTotal>0?`<div style="background:#EEF4FF;border-radius:4px;padding:5px;text-align:center"><div style="font-weight:700;color:var(--inf);font-size:14px">${sentTotal}</div><div style="color:var(--inf)">Sent</div></div>`:''}
         ${s.nr>0?`<div style="background:var(--nrb);border-radius:4px;padding:5px;text-align:center"><div style="font-weight:700;color:var(--gold);font-size:14px">${s.nr}</div><div style="color:var(--gold)">Non-Renew</div></div>`:''}
+        ${s.notice>0?`<div style="background:var(--infb);border-radius:4px;padding:5px;text-align:center"><div style="font-weight:700;color:var(--inf);font-size:14px">${s.notice}</div><div style="color:var(--inf)">On Notice</div></div>`:''}
+        ${s.evict>0?`<div style="background:#FFF0F0;border-radius:4px;padding:5px;text-align:center"><div style="font-weight:700;color:var(--er);font-size:14px">${s.evict}</div><div style="color:var(--er)">Eviction</div></div>`:''}
       </div>
     </div>`;
   }).join('');
@@ -1534,16 +1602,22 @@ function getVisible(){
   const showMTM=document.getElementById('tog-mtm').classList.contains('on');
   const showEv=document.getElementById('tog-ev').classList.contains('on');
   const showNR=document.getElementById('tog-nr')?.classList.contains('on');
+  const showNotice=document.getElementById('tog-notice')?.classList.contains('on');
   const filtered = activeUnits.filter(u=>{
     if(u.st==='evict'&&!showEv)return false;
-    // Hide NR units unless toggle is on
-    if(u.status==='nr'&&!showNR)return false;
+    // On-notice units (resident gave notice) shown unless toggle is off
+    if(u.onNotice&&!showNotice)return false;
+    // Hide NR units unless toggle is on (on-notice handled separately above)
+    if(u.status==='nr'&&!u.onNotice&&!showNR)return false;
     // Only hide MTM units from view if toggle is off AND they haven't been actioned
     if(u.st==='mtm'&&!showMTM&&u.status==='pending')return false;
     if(expF==='mtm')return u.st==='mtm';
     if(expF!=='all'&&moLabel(u)!==expF)return false;
     if(stF!=='all'){
+      if(stF==='notice') return u.onNotice;
+      if(stF==='evict') return u.st==='evict';
       const effectiveStatus = u.status==='af_pending'?'sent':u.status;
+      if(stF==='nr') return effectiveStatus==='nr' && !u.onNotice;
       if(effectiveStatus!==stF) return false;
     }
     return true;
@@ -1643,7 +1717,14 @@ function renderTable(){
     const notesCell=`<td><input class="ni" type="text" value="${esc(u.notes)}" placeholder="Notes…" onchange="saveNotes(${ri},this.value)"></td>`;
 
     let sc='';
-    if(isEv){sc='<span class="chip chn" style="font-size:9px">N/A</span>';}
+    if(isEv){
+      const moveOut=u.leaseEndDate?new Date(u.leaseEndDate+'T12:00:00').toLocaleDateString():'';
+      sc=`<div class="st-cell"><span class="chip chr">⚖ Eviction</span>${moveOut?`<span style="font-size:9px;color:var(--g4)">Lease end: ${moveOut}</span>`:''}</div>`;
+    }
+    else if(u.onNotice){
+      const moveOut=u.leaseEndDate?new Date(u.leaseEndDate+'T12:00:00').toLocaleDateString():'';
+      sc=`<div class="st-cell"><span class="chip" style="background:var(--infb);color:var(--inf);border:1px solid var(--infd)">📢 On Notice</span>${moveOut?`<span style="font-size:9px;color:var(--g4)">Move-out: ${moveOut}</span>`:''}</div>`;
+    }
     else if(isNR){
       const isAFNR = u.afNonRenew && u.nrReason==='Non-renewal indicated in AppFolio';
       sc=`<div class="st-cell">
@@ -1653,24 +1734,22 @@ function renderTable(){
       </div>`;}
     else if(u.status==='af_pending'){sc=`<div class="st-cell"><span class="chip" style="background:#1A4A6B;color:#fff;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700">✓ Offer Sent in AF</span></div>`;}
     else if(u.status==='pending'){
-      // For MTM pending: show last reviewed date if available
-      const mtmReviewInfo = isMTM && u.sentDate ? (()=>{
-        const days=Math.round((new Date()-new Date(u.sentDate))/86400000);
-        const col=days>365?'var(--er)':days>180?'var(--wa)':'var(--g4)';
-        return `<div style="font-size:9px;color:${col};margin-bottom:3px">Last sent: ${days}d ago (${new Date(u.sentDate).toLocaleDateString()})</div>`;
-      })() : (isMTM ? '<div style="font-size:9px;color:var(--wa);margin-bottom:3px">⚠ Never sent</div>' : '');
-      sc=`<div class="st-cell">${mtmReviewInfo}<div style="display:flex;gap:5px"><button class="st-pend" onclick="setUnitStatus(${ri},'approved')">Approve</button><button class="nr-btn" onclick="setUnitStatus(${ri},'nr')">Non-Renew</button></div></div>`;
+      sc=`<div class="st-cell">${mtmIncreaseInfo(u)}<div style="display:flex;gap:5px"><button class="st-pend" onclick="setUnitStatus(${ri},'approved')">Approve</button><button class="nr-btn" onclick="setUnitStatus(${ri},'nr')">Non-Renew</button></div></div>`;
     }
-    else if(u.status==='approved'){sc=`<div class="st-cell"><span class="st-appr">✓ Approved</span><button class="mark-sent" onclick="setUnitStatus(${ri},'sent')">Mark Sent</button><button class="revert-btn" onclick="setUnitStatus(${ri},'pending')">↩ Revert</button></div>`;}
+    else if(u.status==='approved'){
+      const holdBadge=u.onHold?`<span class="chip cha" title="${esc(u.holdReason)}">⏸ On Hold</span>`:'';
+      sc=`<div class="st-cell"><span class="st-appr">✓ Approved</span>${holdBadge}<button class="mark-sent" onclick="setUnitStatus(${ri},'sent')">Mark Sent</button><button class="revert-btn" onclick="setUnitStatus(${ri},'pending')">↩ Revert</button></div>`;
+    }
     else{
-      const sd=u.sentDate?new Date(u.sentDate).toLocaleDateString():'';
-      const mtmSentDays = isMTM&&u.sentDate?Math.round((new Date()-new Date(u.sentDate))/86400000):null;
-      const mtmSentInfo = mtmSentDays!==null?`<div style="font-size:9px;color:${mtmSentDays>365?'var(--er)':mtmSentDays>180?'var(--wa)':'var(--g4)'}">${mtmSentDays}d since last increase</div>`:'';
-      sc=`<div class="st-cell"><span class="st-sent">${sd?'✓ Sent on '+sd:'✓ Sent'}</span><button class="revert-btn" onclick="setUnitStatus(${ri},'approved')">↩ Revert</button>${mtmSentInfo}</div>`;
+      const sd=u.sentDate?new Date(String(u.sentDate).substring(0,10)+'T12:00:00').toLocaleDateString():'';
+      sc=`<div class="st-cell"><span class="st-sent">${sd?'✓ Sent on '+sd:'✓ Sent'}</span><button class="revert-btn" onclick="setUnitStatus(${ri},'approved')">↩ Revert</button>${mtmIncreaseInfo(u)}</div>`;
     }
 
     const tr=document.createElement('tr');
-    if(isMTM)tr.className='row-mtm';if(isEv)tr.className='row-ev';if(isNR)tr.className='row-nr';
+    if(isEv)tr.className='row-ev';
+    else if(u.onNotice)tr.className='row-notice';
+    else if(isNR)tr.className='row-nr';
+    else if(isMTM)tr.className='row-mtm';
     if(selectedRows.has(ri)) tr.style.background='var(--teal5)';
     // Lease start date input for MTM and pending units
     const showLeaseStart = !isNR&&!isEv&&u.status!=='af_pending'&&u.status!=='sent';
@@ -1761,9 +1840,13 @@ async function saveDecision(ri){
     ApprovedDate:(u.status==='approved'||u.status==='sent')
       ? (dec?.approvedDate || new Date().toISOString())
       : null,
+    // Preserve the last-sent date even after a unit reverts off "Sent" — MTM
+    // units cycle back to pending for re-review, and we use this date as the
+    // "last increase" marker. It is only truly cleared by clearDecision() when
+    // AppFolio shows the lease actually renewed forward.
     OfferSentDate:u.status==='sent'
       ? (u.sentDate || dec?.sentDate || new Date().toISOString())
-      : null,
+      : (u.sentDate || dec?.sentDate || null),
   };
   try{
     if(dec){
@@ -1966,7 +2049,8 @@ function showTab(id,tab){
   document.querySelectorAll('.tc').forEach(el=>el.classList.remove('on'));
   document.querySelectorAll('.tab').forEach(el=>el.classList.remove('on'));
   document.getElementById('tc-'+id).classList.add('on');
-  tab.classList.add('on');
+  (tab||document.getElementById('tab-'+id))?.classList.add('on');
+  try{ sessionStorage.setItem('rm_tab', id); }catch(e){}
   if(id==='dashboard') loadDashboard();
   if(id==='pending-send') loadPendingSend();
 }
@@ -1984,6 +2068,7 @@ async function openPropertyReview(key){
   document.querySelectorAll('.tab').forEach(t=>{
     if((t.textContent||'').trim().includes('Renewal Review')) t.classList.add('on');
   });
+  try{ sessionStorage.setItem('rm_tab', 'review'); }catch(e){}
   // Switch mode + selector
   currentMode = newMode;
   document.getElementById('rv-mf-btn').classList.toggle('on', newMode==='mf');
@@ -2054,25 +2139,32 @@ async function loadPendingSend(){
       approvedDate: dec.fields.ApprovedDate||null,
       currentRent: parseFloat(f.TotalMonthlyRent)||0,
       notes: dec.fields.UnitNotes||'',
+      held: !!dec.fields.OnHold,
+      heldReason: dec.fields.HoldReason||'',
       spId: dec.spId,
       decision: dec.fields
     });
   });
 
+  // Held offers sink to the bottom; otherwise sort by deadline urgency.
   rows.sort((a,b)=>{
+    if(a.held!==b.held) return a.held?1:-1;
     const av = a.daysToDeadline ?? 99999;
     const bv = b.daysToDeadline ?? 99999;
     return av-bv;
   });
   _psRows = rows;
 
-  const overdue = rows.filter(r=>r.daysToDeadline!==null && r.daysToDeadline<0).length;
-  const due30   = rows.filter(r=>r.daysToDeadline!==null && r.daysToDeadline>=0 && r.daysToDeadline<=30).length;
+  // Held offers are intentionally parked — keep them out of the urgency counts.
+  const overdue = rows.filter(r=>!r.held && r.daysToDeadline!==null && r.daysToDeadline<0).length;
+  const due30   = rows.filter(r=>!r.held && r.daysToDeadline!==null && r.daysToDeadline>=0 && r.daysToDeadline<=30).length;
+  const heldCount = rows.filter(r=>r.held).length;
 
   document.getElementById('ps-metrics').innerHTML =
-    `<div class="mc"><div class="mcl">Approved · Pending Send</div><div class="mcv g">${rows.length}</div></div>`+
+    `<div class="mc"><div class="mcl">Approved · Pending Send</div><div class="mcv g">${rows.length-heldCount}</div></div>`+
     `<div class="mc"><div class="mcl">Overdue</div><div class="mcv r">${overdue}</div></div>`+
-    `<div class="mc"><div class="mcl">Due ≤30d</div><div class="mcv a">${due30}</div></div>`;
+    `<div class="mc"><div class="mcl">Due ≤30d</div><div class="mcv a">${due30}</div></div>`+
+    (heldCount?`<div class="mc"><div class="mcl">On Hold</div><div class="mcv a">${heldCount}</div></div>`:'');
 
   const tbody = document.getElementById('ps-body');
   if(rows.length === 0){
@@ -2080,7 +2172,8 @@ async function loadPendingSend(){
   } else {
     tbody.innerHTML = rows.map((r,i)=>{
       let dlChip;
-      if(r.daysToDeadline===null) dlChip='<span class="chip chn">—</span>';
+      if(r.held)                   dlChip='<span class="chip cha">⏸ On Hold</span>';
+      else if(r.daysToDeadline===null) dlChip='<span class="chip chn">—</span>';
       else if(r.daysToDeadline<0)  dlChip=`<span class="chip chr">Overdue ${Math.abs(r.daysToDeadline)}d</span>`;
       else if(r.daysToDeadline<=14)dlChip=`<span class="chip chr">${r.daysToDeadline}d left</span>`;
       else if(r.daysToDeadline<=45)dlChip=`<span class="chip cha">${r.daysToDeadline}d left</span>`;
@@ -2091,16 +2184,19 @@ async function loadPendingSend(){
         const m = r.leaseEnd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
         if(m) leaseStr = `${m[2]}/${m[3]}/${m[1].slice(2)}`;
       }
-      return `<tr>
+      const action = r.held
+        ? `<button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--ok);color:var(--ok)" onclick="psReleaseHold(${i})">▶ Release</button>`
+        : `<button class="mark-sent" onclick="psMarkSent(${i})">✉ Mark Sent</button> <button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--wa);color:#A0720A" onclick="psMarkHold(${i})">⏸ Hold</button>`;
+      return `<tr${r.held?' style="background:var(--wab)"':''}>
         <td><a onclick="openPropertyReview('${r.entityKey}')" style="color:var(--teal);text-decoration:underline;cursor:pointer;font-weight:600">${esc(r.entityName)}</a><div style="font-size:9px;color:var(--g4)">${r.portfolioType==='Multi-Family'?'MF':'SFR'}</div></td>
         <td><strong style="font-family:var(--m);font-size:11px">${esc(r.unit)}</strong></td>
-        <td>${esc(r.resident)}</td>
+        <td>${esc(r.resident)}${r.held&&r.heldReason?`<div style="font-size:9px;color:#A0720A">⏸ ${esc(r.heldReason)}</div>`:''}</td>
         <td style="font-family:var(--m);font-size:11px">${leaseStr}</td>
         <td>${dlChip}</td>
         <td style="font-size:11px;color:var(--g4)">${apDate}</td>
         <td style="text-align:right;font-family:var(--m);font-weight:600">$${r.currentRent}</td>
         <td><input class="ni" type="text" value="${esc(r.notes)}" placeholder="Notes…" onchange="psSaveNotes(${i},this.value)" style="width:150px"></td>
-        <td><button class="mark-sent" onclick="psMarkSent(${i})">✉ Mark Sent</button> <button class="bsec" style="font-size:10px;padding:3px 8px" onclick="openPropertyReview('${r.entityKey}')">Open</button></td>
+        <td>${action} <button class="bsec" style="font-size:10px;padding:3px 8px" onclick="openPropertyReview('${r.entityKey}')">Open</button></td>
       </tr>`;
     }).join('');
   }
@@ -2156,6 +2252,55 @@ async function psMarkSent(idx){
   } catch(e){
     hideLoading();
     showToast('Failed: '+e.message, true);
+  }
+}
+
+async function psMarkHold(idx){
+  const r = _psRows[idx];
+  if(!r) return;
+  const reason = (prompt('Reason for holding this approved offer? (optional)','')||'').trim();
+  showLoading('Placing on hold…');
+  try{
+    await updateItem('NS_Renewal_Decisions', r.spId, {
+      OnHold: true,
+      HoldReason: reason,
+      LastUpdatedAt: new Date().toISOString()
+    });
+    // Keep local caches in sync so a re-render of Review shows the hold too.
+    if(r.decision){ r.decision.OnHold=true; r.decision.HoldReason=reason; }
+    const u = activeUnits.find(u => decisions[u.unitId]?.spId === r.spId);
+    if(u){ u.onHold=true; u.holdReason=reason; if(decisions[u.unitId]){ decisions[u.unitId].onHold=true; decisions[u.unitId].holdReason=reason; } }
+    hideLoading();
+    showToast('On hold: '+r.entityName+' · '+r.unit);
+    await loadPendingSend();
+  } catch(e){
+    hideLoading();
+    const code = e.message?.match(/\d{3}/)?.[0];
+    showToast(code==='400'||code==='404'
+      ? 'Hold failed — add the "OnHold" (Yes/No) and "HoldReason" (text) columns to the NS_Renewal_Decisions list first.'
+      : 'Hold failed: '+e.message, true);
+  }
+}
+
+async function psReleaseHold(idx){
+  const r = _psRows[idx];
+  if(!r) return;
+  showLoading('Releasing hold…');
+  try{
+    await updateItem('NS_Renewal_Decisions', r.spId, {
+      OnHold: false,
+      HoldReason: '',
+      LastUpdatedAt: new Date().toISOString()
+    });
+    if(r.decision){ r.decision.OnHold=false; r.decision.HoldReason=''; }
+    const u = activeUnits.find(u => decisions[u.unitId]?.spId === r.spId);
+    if(u){ u.onHold=false; u.holdReason=''; if(decisions[u.unitId]){ decisions[u.unitId].onHold=false; decisions[u.unitId].holdReason=''; } }
+    hideLoading();
+    showToast('Hold released: '+r.entityName+' · '+r.unit);
+    await loadPendingSend();
+  } catch(e){
+    hideLoading();
+    showToast('Release failed: '+e.message, true);
   }
 }
 
