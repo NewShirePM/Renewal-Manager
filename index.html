@@ -917,7 +917,7 @@ function mapLeaseStatus(st, isMTM){
   if(s==='active'||s==='current') return 'current';
   if(s==='month-to-month'||s==='mtm') return 'mtm';
   if(s.includes('vacant')) return 'vacant';
-  if(s==='eviction') return 'evict';
+  if(s.includes('evict')) return 'evict';   // AppFolio rent_roll uses "Evict"
   return 'current';
 }
 

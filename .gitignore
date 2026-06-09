@@ -3,6 +3,7 @@
 *.iqy
 *.xlsx
 *.xls
+*.zip
 
 # Local env / secrets
 .env
