@@ -519,6 +519,43 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
 </div>
 <div class="toast" id="toast"></div>
 
+<!-- EMAIL MANAGER MODAL -->
+<div id="email-modal" style="display:none;position:fixed;inset:0;background:rgba(28,55,64,.35);z-index:1001;align-items:flex-start;justify-content:center;overflow:auto;padding:30px 12px">
+  <div style="background:#fff;border-radius:10px;border-top:3px solid var(--gold);width:580px;max-width:96%;padding:18px 20px;box-shadow:0 8px 40px rgba(28,55,64,.25)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-size:15px;font-weight:700;color:var(--teal)">✉ Email Manager — Renewal On Hold</div>
+      <button onclick="closeEmailModal()" style="background:transparent;border:none;font-size:16px;color:var(--g4);cursor:pointer">✕</button>
+    </div>
+    <div id="em-context" style="background:var(--teal5);border:1px solid var(--teal1);border-radius:6px;padding:8px 10px;font-size:11px;color:var(--teal2);margin-bottom:12px;line-height:1.6"></div>
+    <div style="display:flex;flex-direction:column;gap:3px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--g6)">To — Property Manager</label>
+      <select id="em-to" class="ssel" style="width:100%"></select>
+      <input id="em-to-manual" class="sinp" style="width:100%;margin-top:3px" placeholder="…or type an email to override">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:3px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--g6)">Cc — Regional Manager</label>
+      <select id="em-cc" class="ssel" style="width:100%"></select>
+      <input id="em-cc-manual" class="sinp" style="width:100%;margin-top:3px" placeholder="…or type an email to override">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:3px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--g6)">Subject</label>
+      <input id="em-subj" class="sinp" style="width:100%">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:3px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--g6)">Reason on hold</label>
+      <textarea id="em-reason" class="pnotes-ta" style="min-height:54px"></textarea>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:3px;margin-bottom:10px">
+      <label style="font-size:11px;font-weight:600;color:var(--g6)">Next actions needed before renewal notice can be sent</label>
+      <textarea id="em-actions" class="pnotes-ta" style="min-height:72px" placeholder="e.g., Confirm owner approval on the proposed increase; resolve open work order #1234; verify updated insurance on file."></textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">
+      <button class="bsec" onclick="closeEmailModal()">Cancel</button>
+      <button class="bpri" id="em-send-btn" onclick="sendEmailModal()">✉ Send Email</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── FAVICON ──────────────────────────────────────────────────
 (()=>{const l=document.querySelector("link[rel='icon']")||document.createElement("link");l.rel="icon";l.href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23CDA04B'/><text x='16' y='23' font-family='Georgia,serif' font-size='22' font-weight='bold' fill='%2328434C' text-anchor='middle'>R</text></svg>";document.head.appendChild(l)})();
@@ -532,6 +569,7 @@ const CONFIG = {
 const GRAPH  = "https://graph.microsoft.com/v1.0";
 const SITE   = `${GRAPH}/sites/${CONFIG.siteId}`;
 const SCOPES = ["Sites.ReadWrite.All","User.Read"];
+const MAIL_SCOPES = ["Sites.ReadWrite.All","User.Read","Mail.Send"]; // requested lazily on first email send
 const CYCLE  = new Date().getFullYear().toString();
 
 // ── MSAL ─────────────────────────────────────────────────────
@@ -557,12 +595,12 @@ async function login(){
   }
 }
 
-async function getToken(){
+async function getToken(scopes=SCOPES){
   try{
-    const r = await msalInstance.acquireTokenSilent({scopes:SCOPES,account});
+    const r = await msalInstance.acquireTokenSilent({scopes,account});
     return r.accessToken;
   }catch{
-    const r = await msalInstance.acquireTokenPopup({scopes:SCOPES,account});
+    const r = await msalInstance.acquireTokenPopup({scopes,account});
     return r.accessToken;
   }
 }
@@ -1137,6 +1175,7 @@ function deadlineChip(u){
   return`<span class="chip chg">${days}d left</span>`;
 }
 function esc(s){return(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 
 // ── MTM LAST INCREASE ─────────────────────────────────────────
 // We treat the last offer sent through this app as the last rent increase.
@@ -2194,7 +2233,7 @@ async function loadPendingSend(){
         if(m) leaseStr = `${m[2]}/${m[3]}/${m[1].slice(2)}`;
       }
       const action = r.held
-        ? `<button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--ok);color:var(--ok)" onclick="psReleaseHold(${i})">▶ Release</button>`
+        ? `<button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--ok);color:var(--ok)" onclick="psReleaseHold(${i})">▶ Release</button> <button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--inf);color:var(--inf)" onclick="openManagerEmail(${i})">✉ Email Mgr</button>`
         : `<button class="mark-sent" onclick="psMarkSent(${i})">✉ Mark Sent</button> <button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--wa);color:#A0720A" onclick="psMarkHold(${i})">⏸ Hold</button>`;
       return `<tr${r.held?' style="background:var(--wab)"':''}>
         <td><a onclick="openPropertyReview('${r.entityKey}')" style="color:var(--teal);text-decoration:underline;cursor:pointer;font-weight:600">${esc(r.entityName)}</a><div style="font-size:9px;color:var(--g4)">${r.portfolioType==='Multi-Family'?'MF':'SFR'}</div></td>
@@ -2311,6 +2350,125 @@ async function psReleaseHold(idx){
     hideLoading();
     showToast('Release failed: '+e.message, true);
   }
+}
+
+// ── EMAIL MANAGER (renewal on hold) ───────────────────────────
+// Recipients come from the shared "Employees" SharePoint list. Mail is sent
+// as the signed-in user via Microsoft Graph /me/sendMail (same pattern as the
+// other NewShire apps). Mail.Send consent is requested lazily on first send.
+let _employeesCache = null;
+let _emailRow = null;
+
+async function loadEmployeesForEmail(){
+  if(_employeesCache) return _employeesCache;
+  const items = await getAllItems('Employees');
+  _employeesCache = items.map(it=>({
+    name:        it.fields.Title || it.fields.Name || '',
+    email:       (it.fields.Email || '').trim(),
+    jobTitle:    it.fields.JobTitle || '',
+    renewalRole: it.fields.RenewalRole || ''
+  })).filter(e=>e.email);
+  return _employeesCache;
+}
+function _isRegional(e){ const j=(e.jobTitle||'').toLowerCase(), r=(e.renewalRole||'').toLowerCase(); return j.includes('regional') || r.includes('regional'); }
+function _isManager(e){ const j=(e.jobTitle||'').toLowerCase(), r=(e.renewalRole||'').toLowerCase(); return j.includes('manager') || !!r; }
+function _empOptions(list){ return list.map(e=>`<option value="${esc(e.email)}">${esc(e.name)}${e.jobTitle?' — '+esc(e.jobTitle):''}</option>`).join(''); }
+function _leaseStr(r){ if(!r.leaseEnd) return '—'; const m=r.leaseEnd.match(/^(\d{4})-(\d{2})-(\d{2})$/); return m?`${m[2]}/${m[3]}/${m[1].slice(2)}`:'—'; }
+function _deadlineStr(r){ return r.daysToDeadline==null?'—':(r.daysToDeadline<0?`Overdue ${Math.abs(r.daysToDeadline)} days`:`${r.daysToDeadline} days left`); }
+
+async function openManagerEmail(idx){ const r=_psRows[idx]; if(r) await _openEmail(r); }
+
+async function _openEmail(r){
+  _emailRow = r;
+  showLoading('Loading managers…');
+  let emps=[];
+  try{ emps = await loadEmployeesForEmail(); }catch(e){ console.warn('Employees load failed:', e.message); }
+  hideLoading();
+
+  let mgrs = emps.filter(_isManager); if(!mgrs.length) mgrs = emps.slice();
+  mgrs.sort((a,b)=>a.name.localeCompare(b.name));
+  const regionals = emps.filter(_isRegional).sort((a,b)=>a.name.localeCompare(b.name));
+
+  const toSel=document.getElementById('em-to');
+  toSel.innerHTML = '<option value="">— select manager —</option>' + _empOptions(mgrs);
+  document.getElementById('em-to-manual').value='';
+
+  const ccList = regionals.length ? regionals : emps.slice().sort((a,b)=>a.name.localeCompare(b.name));
+  const ccSel=document.getElementById('em-cc');
+  ccSel.innerHTML = '<option value="">— none —</option>' + _empOptions(ccList);
+  if(regionals.length) ccSel.value = regionals[0].email; // auto-cc the (first) regional manager
+  document.getElementById('em-cc-manual').value='';
+
+  document.getElementById('em-context').innerHTML =
+    `<strong>${esc(r.entityName)}</strong> · Unit ${esc(r.unit)} · ${esc(r.resident)}<br>`+
+    `Current rent $${r.currentRent} · Lease end ${_leaseStr(r)} · Send deadline: ${_deadlineStr(r)}`;
+  document.getElementById('em-subj').value = `Renewal on hold — ${r.entityName} · Unit ${r.unit} (${r.resident})`;
+  document.getElementById('em-reason').value = r.heldReason || '';
+  document.getElementById('em-actions').value = '';
+  document.getElementById('email-modal').style.display='flex';
+}
+
+function closeEmailModal(){ document.getElementById('email-modal').style.display='none'; _emailRow=null; }
+
+function _recip(selId,manualId){
+  const m=(document.getElementById(manualId).value||'').trim();
+  return m || (document.getElementById(selId).value||'').trim();
+}
+
+async function sendEmailModal(){
+  const r=_emailRow; if(!r) return;
+  const to=_recip('em-to','em-to-manual');
+  if(!to){ showToast('Pick or type a manager email first.',true); return; }
+  const cc=_recip('em-cc','em-cc-manual');
+  const subject=(document.getElementById('em-subj').value||'').trim()||'Renewal on hold';
+  const reason=(document.getElementById('em-reason').value||'').trim();
+  const actions=(document.getElementById('em-actions').value||'').trim();
+  const usedManualTo=!!document.getElementById('em-to-manual').value.trim();
+  const toName=(document.getElementById('em-to').selectedOptions[0]?.textContent||'').split(' — ')[0];
+  const greet=(toName && !usedManualTo) ? toName.split(' ')[0] : 'there';
+
+  const html = `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#28434C">
+    <p>Hi ${escHtml(greet)},</p>
+    <p>The renewal below has been placed <strong>on hold</strong>. Please review the reason and complete the next actions so we can send the renewal notice.</p>
+    <table style="border-collapse:collapse;font-size:13px;margin:10px 0">
+      <tr><td style="padding:2px 12px 2px 0;color:#7A8585">Property</td><td><strong>${escHtml(r.entityName)}</strong> (${r.portfolioType==='Multi-Family'?'MF':'SFR'})</td></tr>
+      <tr><td style="padding:2px 12px 2px 0;color:#7A8585">Unit</td><td>${escHtml(r.unit)}</td></tr>
+      <tr><td style="padding:2px 12px 2px 0;color:#7A8585">Resident</td><td>${escHtml(r.resident)}</td></tr>
+      <tr><td style="padding:2px 12px 2px 0;color:#7A8585">Current rent</td><td>$${r.currentRent}</td></tr>
+      <tr><td style="padding:2px 12px 2px 0;color:#7A8585">Lease end</td><td>${_leaseStr(r)}</td></tr>
+      <tr><td style="padding:2px 12px 2px 0;color:#7A8585">Send deadline</td><td>${_deadlineStr(r)}</td></tr>
+    </table>
+    <p style="margin:10px 0 2px"><strong>Reason on hold</strong></p>
+    <div style="background:#FFF8E8;border-left:3px solid #CDA04B;padding:8px 10px;white-space:pre-wrap">${escHtml(reason)||'—'}</div>
+    <p style="margin:14px 0 2px"><strong>Next actions needed before renewal notice can be sent</strong></p>
+    <div style="background:#EDF4F7;border-left:3px solid #28434C;padding:8px 10px;white-space:pre-wrap">${escHtml(actions)||'—'}</div>
+    <p style="margin-top:16px">Thanks,<br>${escHtml(account?.name||'')}</p>
+    <p style="font-size:11px;color:#A8B0B0">Sent from NewShire Renewal Manager</p>
+  </div>`;
+
+  const btn=document.getElementById('em-send-btn'); btn.disabled=true; btn.textContent='Sending…';
+  try{
+    await sendGraphMail(to, cc, subject, html);
+    showToast('Email sent to '+to+(cc?' (cc '+cc+')':''));
+    closeEmailModal();
+  }catch(e){
+    const code=e.message?.match(/\d{3}/)?.[0];
+    showToast((code==='403'||code==='401')
+      ? 'Email failed ('+code+') — you may need to approve the Mail.Send permission. Try again and accept the sign-in prompt.'
+      : 'Email failed: '+e.message, true);
+  }finally{ btn.disabled=false; btn.textContent='✉ Send Email'; }
+}
+
+async function sendGraphMail(to, cc, subject, html){
+  const t=await getToken(MAIL_SCOPES);
+  const message={ subject, body:{contentType:'HTML',content:html}, toRecipients:[{emailAddress:{address:to}}] };
+  if(cc) message.ccRecipients=[{emailAddress:{address:cc}}];
+  const r=await fetch('https://graph.microsoft.com/v1.0/me/sendMail',{
+    method:'POST',
+    headers:{Authorization:`Bearer ${t}`,'Content-Type':'application/json'},
+    body:JSON.stringify({message, saveToSentItems:true})
+  });
+  if(!r.ok){ throw new Error(r.status+': '+(await r.text()).substring(0,200)); }
 }
 
 // ── HELPERS ───────────────────────────────────────────────────
