@@ -761,10 +761,10 @@ async function loadUnitsForEntity(entityKey){
   let rawUnits;
   if(isMF){
     const allUnits = await getAllItems('NS_Units_Cache');
-    rawUnits = allUnits.filter(item=>(item.fields.PropertyName||'')===s.ownerName);
+    rawUnits = allUnits.filter(item=>(item.fields.PropertyName||'')===s.ownerName && !isInactiveStatus(item.fields.LeaseStatus));
   } else {
     const allUnitsSFR = await getAllItems('NS_Units_Cache');
-    rawUnits = allUnitsSFR.filter(item=>(item.fields.OwnerName||'')===s.ownerName);
+    rawUnits = allUnitsSFR.filter(item=>(item.fields.OwnerName||'')===s.ownerName && !isInactiveStatus(item.fields.LeaseStatus));
   }
   hideLoading();
 
@@ -900,6 +900,15 @@ async function loadUnitsForEntity(entityKey){
       leaseStatus: f.LeaseStatus||''
     };
   });
+}
+
+// Units with no active/forthcoming resident — moved-out / vacant. These are
+// excluded from the renewal tracker entirely (table, counts, dashboard, pending
+// send). Eviction and Notice are NOT inactive — those residents are still in place.
+function isInactiveStatus(ls){
+  const s=(ls||'').toLowerCase();
+  return s.includes('vacant') || s.includes('past') || s.includes('former')
+      || s.includes('moved')  || s.includes('terminated') || s.includes('cancel');
 }
 
 function mapLeaseStatus(st, isMTM){
@@ -1440,10 +1449,10 @@ async function loadDashboard(){
 
   allUnits.forEach(item=>{
     const f = item.fields;
-    if((f.LeaseStatus||'').includes('Vacant')) return;
+    if(isInactiveStatus(f.LeaseStatus)) return;
     const uid = String(f.UnitID||item.id);
     const dec = decByUnit[uid];
-    
+
     // Match to entity
     const isMF = (f.PortfolioType||'').toLowerCase().includes('multi') || (f.PortfolioType||'')==='MF';
     const matchKey = isMF ? f.PropertyName : f.OwnerName;
@@ -2153,7 +2162,7 @@ async function loadPendingSend(){
 
   allUnits.forEach(item=>{
     const f = item.fields;
-    if((f.LeaseStatus||'').includes('Vacant')) return;
+    if(isInactiveStatus(f.LeaseStatus)) return;
     const uid = String(f.UnitID||item.id);
     const dec = decByUnit[uid];
     if(!dec) return;
