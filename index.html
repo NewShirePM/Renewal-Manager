@@ -257,6 +257,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
     <div class="tab on" id="tab-dashboard" onclick="showTab('dashboard',this)">📊 Dashboard</div>
     <div class="tab" id="tab-review" onclick="showTab('review',this)">Renewal Review</div>
     <div class="tab" id="tab-pending-send" onclick="showTab('pending-send',this)">📤 Pending Send</div>
+    <div class="tab" id="tab-sent-overdue" onclick="showTab('sent-overdue',this)">⏰ Sent · No Response</div>
     <div class="tab" id="tab-settings" onclick="showTab('settings',this)">Settings</div>
   </div>
   <div class="tb-right">
@@ -456,6 +457,40 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
             <th style="min-width:175px">Action</th>
           </tr></thead>
           <tbody id="ps-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SENT · NO RESPONSE (cross-property, regional pull) -->
+<div class="tc" id="tc-sent-overdue">
+  <div style="padding:18px 0 10px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:var(--teal)">Sent · No Response — All Properties</div>
+        <div style="font-size:11px;color:var(--g4);margin-top:2px">Renewal offers marked <strong>Sent</strong> whose lease has already expired with no signed renewal — across all portfolios.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:10px;color:var(--g4)" id="so-updated"></div>
+        <button class="bsec" onclick="exportSentOverdue()">Export CSV</button>
+      </div>
+    </div>
+    <div class="mbar" id="so-metrics"></div>
+    <div class="twrap">
+      <div class="tscr">
+        <table>
+          <thead><tr>
+            <th style="min-width:180px">Property / Owner</th>
+            <th style="min-width:60px">Unit</th>
+            <th style="min-width:140px">Resident</th>
+            <th style="min-width:78px">Lease End</th>
+            <th style="min-width:90px">Sent On</th>
+            <th style="min-width:90px">Past Expiration</th>
+            <th style="min-width:70px;text-align:right">Current</th>
+            <th style="min-width:170px">Follow-up Notes</th>
+          </tr></thead>
+          <tbody id="so-body"></tbody>
         </table>
       </div>
     </div>
@@ -863,16 +898,12 @@ async function loadUnitsForEntity(entityKey){
       status: (()=>{
         const afNR=f.AFNonRenew===true||(f.LeaseStatus||'').includes('Notice');
         const afPending=(f.AFRenewalStatus||'')==='Pending';
-        // Resident-renewed detection: lease end date moved FORWARD by ≥30 days
-        // in AppFolio. Parsed as Date objects to avoid timezone substring drift.
-        // Backward moves, ≤30-day drift, or missing values are ignored.
-        const _pd = s => { const m=s&&String(s).substring(0,10).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m?new Date(+m[1],+m[2]-1,+m[3]):null; };
-        const _newEndStr=(f.HasS8Charge&&f.EligibleForRentIncreaseOn)?f.EligibleForRentIncreaseOn.substring(0,10):(f.LeaseEndDate||'').substring(0,10);
-        const _oldEnd=_pd(dec?.leaseEndDate);
-        const _newEnd=_pd(_newEndStr);
-        const _renewed=_oldEnd&&_newEnd&&((_newEnd-_oldEnd)>=30*86400000);
-        if(_renewed&&(dec.status==='approved'||dec.status==='sent')){
-          setTimeout(()=>clearDecision(dec.spId,_newEndStr),0);
+        // Auto-resolve Approved/Sent decisions AppFolio shows as completed —
+        // resident signed a renewal, or the unit rolled to a new month-to-month
+        // lease. Resets to Pending and drops "Sent". See decisionResolved().
+        const _res=decisionResolved(f, dec?.status, dec?.leaseEndDate, dec?.sentDate||dec?.approvedDate);
+        if(_res){
+          setTimeout(()=>clearDecision(dec.spId,_res.newLeaseEnd),0);
           return 'pending';
         }
         // Local decisions win over AppFolio status — Approved/Sent/Non-Renew set
@@ -1165,9 +1196,25 @@ function calcMTM(u){
 function moLabel(u){return MOS[u.em-1]+' '+u.ey;}
 function p2(n){return n<10?'0'+n:n;}
 function fmtDate(u){
-  if(!u.leaseEndDate) return '<span style="color:var(--g3)">MTM</span>';
-  const s=p2(u.em)+'/'+p2(u.ed)+'/'+String(u.ey).slice(2);
-  return u.st==='mtm'?`<span style="color:var(--er)">${s}</span>`:s;
+  // MTM units have no real expiration — show when month-to-month began instead.
+  // Derived from the original lease-end date (when the fixed term lapsed → MTM).
+  if(u.st==='mtm'){
+    if(u.leaseEndDate){
+      const d=new Date(u.leaseEndDate+'T12:00:00');
+      const s=p2(d.getMonth()+1)+'/'+p2(d.getDate())+'/'+String(d.getFullYear()).slice(2);
+      return `<span style="color:var(--er);font-weight:600">MTM</span><div style="font-size:9px;color:var(--er)">since ${s}</div>`;
+    }
+    return '<span style="color:var(--er);font-weight:600">MTM</span><div style="font-size:9px;color:var(--g3)">start unknown</div>';
+  }
+  if(!u.leaseEndDate) return '<span style="color:var(--g3)">—</span>';
+  return p2(u.em)+'/'+p2(u.ed)+'/'+String(u.ey).slice(2);
+}
+// MTM-start as plain text (for CSV export). Derived from the original lease-end.
+function mtmStartText(u){
+  if(u.st!=='mtm') return '';
+  if(!u.leaseEndDate) return 'unknown';
+  const d=new Date(u.leaseEndDate+'T12:00:00');
+  return p2(d.getMonth()+1)+'/'+p2(d.getDate())+'/'+d.getFullYear();
 }
 function deadlineChip(u){
   if(u.st==='evict') return'<span class="chip chr">Eviction</span>';
@@ -1829,6 +1876,29 @@ function renderTable(){
 // ── STATUS ACTIONS ────────────────────────────────────────────
 
 
+// Has an Approved/Sent renewal decision been resolved in AppFolio, so it should
+// reset to Pending and drop the "Sent" status? Two triggers:
+//   1) Resident signed a renewal — lease end moved FORWARD ≥30 days.
+//   2) Unit rolled to a NEW month-to-month lease — it's MTM now AND its fixed
+//      term ended AFTER the offer went out (i.e. it lapsed into MTM, rather than
+//      already being MTM when we offered it — which would be an MTM-rate offer).
+// `decRefDate` is the offer-sent (or approved) date. Returns {newLeaseEnd,reason}
+// or null. Date-only parsing avoids timezone drift.
+function decisionResolved(f, decStatus, decLeaseEnd, decRefDate){
+  const st=(decStatus||'').toLowerCase().replace(/[- ]/g,'');
+  if(st!=='approved' && st!=='sent') return null;
+  const pd = s => { const m=s&&String(s).substring(0,10).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m?new Date(+m[1],+m[2]-1,+m[3]):null; };
+  const newEndStr=(f.HasS8Charge&&f.EligibleForRentIncreaseOn)?f.EligibleForRentIncreaseOn.substring(0,10):(f.LeaseEndDate||'').substring(0,10);
+  const oldEnd=pd(decLeaseEnd), newEnd=pd(newEndStr);
+  // 1) Signed a renewal — lease end pushed forward.
+  if(oldEnd && newEnd && (newEnd-oldEnd)>=30*86400000) return {newLeaseEnd:newEndStr, reason:'renewed'};
+  // 2) Rolled to a new month-to-month lease.
+  const isMTMnow=!!f.IsMTM || (f.LeaseStatus||'').toLowerCase()==='month-to-month';
+  const ref=pd(decRefDate);
+  if(isMTMnow && oldEnd && ref && oldEnd>ref) return {newLeaseEnd:newEndStr||null, reason:'mtm'};
+  return null;
+}
+
 async function clearDecision(spId, newLeaseEnd){
   if(!spId) return;
   try{
@@ -2090,9 +2160,9 @@ async function syncNow(){
 // ── EXPORT CSV ────────────────────────────────────────────────
 function exportCSV(){
   const vis=getVisible();
-  const rows=[['Unit','Resident','Exp','Status','Current Rent','Market Rent'].concat(activeTargets.map(t=>`${MOS[t.mo-1]} ${t.yr}`))];
+  const rows=[['Unit','Resident','Exp','MTM Since','Status','Current Rent','Market Rent'].concat(activeTargets.map(t=>`${MOS[t.mo-1]} ${t.yr}`))];
   vis.forEach(u=>{
-    const row=[u.u,u.n,moLabel(u),u.status,u.curr,u.mkt];
+    const row=[u.u,u.n,moLabel(u),mtmStartText(u),u.status,u.curr,u.mkt];
     activeTargets.forEach((_,ti)=>{const r=calcOffer(u,ti);row.push(r.mos>0&&r.mos<=36?r.v.toFixed(0):'');});
     rows.push(row);
   });
@@ -2109,6 +2179,7 @@ function showTab(id,tab){
   try{ sessionStorage.setItem('rm_tab', id); }catch(e){}
   if(id==='dashboard') loadDashboard();
   if(id==='pending-send') loadPendingSend();
+  if(id==='sent-overdue') loadSentOverdue();
 }
 
 // ── OPEN PROPERTY REVIEW (from dashboard card click) ─────────
@@ -2168,6 +2239,11 @@ async function loadPendingSend(){
     if(!dec) return;
     // Only show units approved-and-not-sent. AF Sent / Sent / NR / Pending excluded.
     if((dec.fields.DecisionStatus||'').toLowerCase() !== 'approved') return;
+
+    // Drop (and clear) decisions AppFolio shows as resolved — signed renewal or
+    // a new month-to-month lease.
+    const _res = decisionResolved(f, dec.fields.DecisionStatus, dec.fields.LeaseEndDate, dec.fields.OfferSentDate||dec.fields.ApprovedDate);
+    if(_res){ setTimeout(()=>clearDecision(dec.spId,_res.newLeaseEnd),0); return; }
 
     const isMF = (f.PortfolioType||'').toLowerCase().includes('multi') || (f.PortfolioType||'')==='MF';
     const matchKey = isMF ? f.PropertyName : f.OwnerName;
@@ -2279,6 +2355,152 @@ async function psSaveNotes(idx, val){
         const u = activeUnits.find(u => decisions[u.unitId]?.spId === r.spId);
         if(u){ u.notes = val; if(decisions[u.unitId]) decisions[u.unitId].notes = val; }
       }
+      showToast('Note saved.');
+    } catch(e){
+      showToast('Note save failed: '+e.message, true);
+    }
+  }, 800);
+}
+
+// ── SENT · NO RESPONSE (cross-property: Sent + expiration in the past) ──────
+// Regional pull of every unit whose renewal offer was marked Sent but whose
+// lease has already lapsed with no signed renewal. If the resident had renewed,
+// AppFolio would have pushed the lease-end date forward and it'd no longer be
+// "past expiration" — so this view naturally isolates the non-responders.
+let _soRows = [];
+async function loadSentOverdue(){
+  document.getElementById('so-updated').textContent = 'Loading…';
+  showLoading('Loading sent offers…');
+  let allUnits, allDecs;
+  try{
+    [allUnits, allDecs] = await Promise.all([
+      getAllItems('NS_Units_Cache'),
+      getAllItems('NS_Renewal_Decisions')
+    ]);
+  } catch(e){
+    hideLoading();
+    showToast('Failed to load: '+e.message, true);
+    return;
+  }
+  hideLoading();
+
+  const decByUnit = {};
+  allDecs.forEach(item=>{ decByUnit[String(item.fields.UnitID||'')] = {spId:item.id, fields:item.fields}; });
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const rows = [];
+
+  allUnits.forEach(item=>{
+    const f = item.fields;
+    if(isInactiveStatus(f.LeaseStatus)) return;
+    const uid = String(f.UnitID||item.id);
+    const dec = decByUnit[uid];
+    if(!dec) return;
+    // Only units whose in-app decision is Sent.
+    if((dec.fields.DecisionStatus||'').toLowerCase() !== 'sent') return;
+
+    // If AppFolio shows it resolved (signed renewal, or rolled to a new MTM
+    // lease), clear the stale Sent status and drop it from this list.
+    const _res = decisionResolved(f, dec.fields.DecisionStatus, dec.fields.LeaseEndDate, dec.fields.OfferSentDate||dec.fields.ApprovedDate);
+    if(_res){ setTimeout(()=>clearDecision(dec.spId,_res.newLeaseEnd),0); return; }
+
+    // Effective expiration (S8 uses the rent-increase eligibility date).
+    const leaseEnd = (f.HasS8Charge && f.EligibleForRentIncreaseOn)
+      ? f.EligibleForRentIncreaseOn.substring(0,10)
+      : (f.LeaseEndDate||'').substring(0,10);
+    if(!leaseEnd) return;                       // no expiration on record → can't be "past"
+    const exp = new Date(leaseEnd+'T12:00:00');
+    if(exp >= today) return;                    // expiration must already be in the past
+    const daysPast = Math.round((today - exp)/86400000);
+
+    const isMF = (f.PortfolioType||'').toLowerCase().includes('multi') || (f.PortfolioType||'')==='MF';
+    const matchKey = isMF ? f.PropertyName : f.OwnerName;
+    const entityKey = Object.keys(allSettings).find(k => allSettings[k].ownerName === matchKey) || null;
+
+    rows.push({
+      entityKey,
+      entityName:   entityKey ? allSettings[entityKey].name : (matchKey||'—'),
+      portfolioType:entityKey ? allSettings[entityKey].portfolioType : (isMF?'Multi-Family':'Single-Family'),
+      unit:         f.UnitNumber||f.PropertyName||uid,
+      resident:     f.ResidentName||'Vacant',
+      leaseEnd,
+      daysPast,
+      sentDate:     dec.fields.OfferSentDate||null,
+      currentRent:  parseFloat(f.TotalMonthlyRent)||0,
+      notes:        dec.fields.UnitNotes||'',
+      spId:         dec.spId,
+      decision:     dec.fields
+    });
+  });
+
+  rows.sort((a,b)=>b.daysPast-a.daysPast); // most overdue first
+  _soRows = rows;
+
+  const over90 = rows.filter(r=>r.daysPast>90).length;
+  const mid    = rows.filter(r=>r.daysPast>30 && r.daysPast<=90).length;
+  document.getElementById('so-metrics').innerHTML =
+    `<div class="mc"><div class="mcl">Sent · No Response</div><div class="mcv r">${rows.length}</div></div>`+
+    `<div class="mc"><div class="mcl">&gt;90 days past</div><div class="mcv r">${over90}</div></div>`+
+    `<div class="mc"><div class="mcl">31–90 days past</div><div class="mcv a">${mid}</div></div>`;
+
+  const tbody = document.getElementById('so-body');
+  if(rows.length === 0){
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--g4)">No sent offers are past their expiration. 🎉</td></tr>';
+  } else {
+    tbody.innerHTML = rows.map((r,i)=>{
+      let leaseStr = '—';
+      const m = r.leaseEnd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if(m) leaseStr = `${m[2]}/${m[3]}/${m[1].slice(2)}`;
+      const sentStr = r.sentDate ? new Date(String(r.sentDate).substring(0,10)+'T12:00:00').toLocaleDateString() : '—';
+      const overChip = r.daysPast>90 ? `<span class="chip chr">${r.daysPast}d past</span>`
+                     : r.daysPast>30 ? `<span class="chip cha">${r.daysPast}d past</span>`
+                     :                 `<span class="chip chn">${r.daysPast}d past</span>`;
+      const nameCell = r.entityKey
+        ? `<a onclick="openPropertyReview('${r.entityKey}')" style="color:var(--teal);text-decoration:underline;cursor:pointer;font-weight:600">${esc(r.entityName)}</a>`
+        : `<strong>${esc(r.entityName)}</strong>`;
+      return `<tr>
+        <td>${nameCell}<div style="font-size:9px;color:var(--g4)">${r.portfolioType==='Multi-Family'?'MF':'SFR'}</div></td>
+        <td><strong style="font-family:var(--m);font-size:11px">${esc(r.unit)}</strong></td>
+        <td>${esc(r.resident)}</td>
+        <td style="font-family:var(--m);font-size:11px">${leaseStr}</td>
+        <td style="font-size:11px;color:var(--g4)">${sentStr}</td>
+        <td>${overChip}</td>
+        <td style="text-align:right;font-family:var(--m);font-weight:600">$${r.currentRent}</td>
+        <td><input class="ni" type="text" value="${esc(r.notes)}" placeholder="Follow-up…" onchange="soSaveNotes(${i},this.value)" style="width:155px"></td>
+      </tr>`;
+    }).join('');
+  }
+  document.getElementById('so-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+function exportSentOverdue(){
+  if(!_soRows.length){ showToast('Nothing to export.'); return; }
+  const rows = [['Property / Owner','Portfolio','Unit','Resident','Lease End','Sent On','Days Past Expiration','Current Rent']];
+  _soRows.forEach(r=>{
+    rows.push([
+      r.entityName, r.portfolioType, r.unit, r.resident, r.leaseEnd,
+      r.sentDate ? String(r.sentDate).substring(0,10) : '', r.daysPast, r.currentRent
+    ]);
+  });
+  const csv = rows.map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+  a.download = 'sent-no-response.csv'; a.click();
+}
+
+let _soNotesTimers = {};
+async function soSaveNotes(idx, val){
+  const r = _soRows[idx];
+  if(!r) return;
+  r.notes = val;
+  clearTimeout(_soNotesTimers[idx]);
+  _soNotesTimers[idx] = setTimeout(async ()=>{
+    try{
+      await updateItem('NS_Renewal_Decisions', r.spId, {
+        UnitNotes: val,
+        LastUpdatedAt: new Date().toISOString()
+      });
+      if(r.decision) r.decision.UnitNotes = val;
       showToast('Note saved.');
     } catch(e){
       showToast('Note save failed: '+e.message, true);
