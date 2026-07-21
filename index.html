@@ -454,7 +454,7 @@ tbody tr.row-nr .s0,tbody tr.row-nr .s1{background:var(--nrb)}
             <th style="min-width:90px">Approved On</th>
             <th style="min-width:70px;text-align:right">Current</th>
             <th style="min-width:160px">Notes</th>
-            <th style="min-width:175px">Action</th>
+            <th style="min-width:260px">Action</th>
           </tr></thead>
           <tbody id="ps-body"></tbody>
         </table>
@@ -2317,9 +2317,10 @@ async function loadPendingSend(){
         const m = r.leaseEnd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
         if(m) leaseStr = `${m[2]}/${m[3]}/${m[1].slice(2)}`;
       }
+      const endButtons = `<button class="nr-btn" onclick="psMarkEnded(${i},'moved')">🚚 Moved Out</button> <button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--inf);color:var(--inf)" onclick="psMarkEnded(${i},'notice')">📢 Notice</button>`;
       const action = r.held
-        ? `<button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--ok);color:var(--ok)" onclick="psReleaseHold(${i})">▶ Release</button> <button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--inf);color:var(--inf)" onclick="openManagerEmail(${i})">✉ Email Mgr</button>`
-        : `<button class="mark-sent" onclick="psMarkSent(${i})">✉ Mark Sent</button> <button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--wa);color:#A0720A" onclick="psMarkHold(${i})">⏸ Hold</button>`;
+        ? `<button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--ok);color:var(--ok)" onclick="psReleaseHold(${i})">▶ Release</button> <button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--inf);color:var(--inf)" onclick="openManagerEmail(${i})">✉ Email Mgr</button> ${endButtons}`
+        : `<button class="mark-sent" onclick="psMarkSent(${i})">✉ Mark Sent</button> <button class="bsec" style="font-size:10px;padding:3px 8px;border-color:var(--wa);color:#A0720A" onclick="psMarkHold(${i})">⏸ Hold</button> ${endButtons}`;
       return `<tr${r.held?' style="background:var(--wab)"':''}>
         <td><a onclick="openPropertyReview('${r.entityKey}')" style="color:var(--teal);text-decoration:underline;cursor:pointer;font-weight:600">${esc(r.entityName)}</a><div style="font-size:9px;color:var(--g4)">${r.portfolioType==='Multi-Family'?'MF':'SFR'}</div></td>
         <td><strong style="font-family:var(--m);font-size:11px">${esc(r.unit)}</strong></td>
@@ -2329,7 +2330,7 @@ async function loadPendingSend(){
         <td style="font-size:11px;color:var(--g4)">${apDate}</td>
         <td style="text-align:right;font-family:var(--m);font-weight:600">$${r.currentRent}</td>
         <td><input class="ni" type="text" value="${esc(r.notes)}" placeholder="Notes…" onchange="psSaveNotes(${i},this.value)" style="width:150px"></td>
-        <td>${action} <button class="bsec" style="font-size:10px;padding:3px 8px" onclick="openPropertyReview('${r.entityKey}')">Open</button></td>
+        <td><div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">${action} <button class="bsec" style="font-size:10px;padding:3px 8px" onclick="openPropertyReview('${r.entityKey}')">Open</button></div></td>
       </tr>`;
     }).join('');
   }
@@ -2580,6 +2581,36 @@ async function psReleaseHold(idx){
   } catch(e){
     hideLoading();
     showToast('Release failed: '+e.message, true);
+  }
+}
+
+// Pull an approved-but-not-yet-sent offer out of the queue because the
+// resident moved out or gave notice before the renewal went out. Reuses the
+// existing Non-Renew status/reason fields so it plugs into the same chips,
+// counts, and "↩ Rescind" undo already used for AppFolio-detected non-renewals.
+async function psMarkEnded(idx, reason){
+  const r = _psRows[idx];
+  if(!r) return;
+  const label = reason==='moved' ? 'Moved out before renewal sent' : 'Gave notice before renewal sent';
+  if(!confirm(`Mark ${r.resident} (${r.unit}) as ${reason==='moved'?'Moved Out':'On Notice'} and pull this offer out of Pending Send?`)) return;
+  showLoading('Updating…');
+  try{
+    await updateItem('NS_Renewal_Decisions', r.spId, {
+      DecisionStatus: 'Non-Renew',
+      NonRenewReason: label,
+      LastUpdatedAt: new Date().toISOString()
+    });
+    const u = activeUnits.find(u => decisions[u.unitId]?.spId === r.spId);
+    if(u){
+      u.status='nr'; u.nrReason=label;
+      if(decisions[u.unitId]){ decisions[u.unitId].status='nr'; decisions[u.unitId].nrReason=label; }
+    }
+    hideLoading();
+    showToast((reason==='moved'?'Moved out':'On notice')+': '+r.entityName+' · '+r.unit);
+    await loadPendingSend();
+  } catch(e){
+    hideLoading();
+    showToast('Failed: '+e.message, true);
   }
 }
 
