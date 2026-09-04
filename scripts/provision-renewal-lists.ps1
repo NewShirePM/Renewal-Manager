@@ -99,7 +99,9 @@ $UnitsFields = @(
     @{ Name = 'ResidentPhone';    Type = 'Text' }
     @{ Name = 'TenantID';         Type = 'Text' }
 
-    @{ Name = 'LeaseStatus';      Type = 'Text' }   # Current / Notice-* / Evict
+    @{ Name = 'LeaseStatus';      Type = 'Text' }   # Current / Notice-* / Evict / Vacant-*
+    # Vacant units ship too, flagged -- they are the denominator for occupancy.
+    @{ Name = 'IsOccupied';       Type = 'Boolean' }
     @{ Name = 'IsMTM';            Type = 'Boolean' }
     @{ Name = 'LeaseFrom';        Type = 'Text' }
     @{ Name = 'LeaseEnd';         Type = 'Text' }
@@ -151,6 +153,16 @@ $PipelineFields = @(
        Choices = @('Needs Rate','With Owner','Awaiting Approval','Approved to Send','Sent','Non-Renew') }
 
     @{ Name = 'CurrentRentSnapshot'; Type = 'Number' }
+    # Up to three terms are offered at once (9mo, 12mo, and a term sized so the
+    # NEXT expiration lands in peak leasing season). Stored as JSON:
+    #   [{"months":9,"rent":1350},{"months":12,"rent":1300},{"months":17,"rent":1275}]
+    # ProposedRent / ProposedTermMonths mirror the 12-month headline, so
+    # approvals, metrics and sorting have one scalar to work from.
+    @{ Name = 'OffersJSON';         Type = 'Note' }
+    # Some units shouldn't be tied up on a fixed term at all -- owner is
+    # selling, unit needs work, resident is shaky. Those get a single
+    # month-to-month offer instead of the slate, stored with months = 0.
+    @{ Name = 'IsMTMOnly';          Type = 'Boolean' }
     @{ Name = 'ProposedRent';       Type = 'Number' }
     @{ Name = 'ProposedTermMonths'; Type = 'Number' }
     @{ Name = 'ProposedLeaseStart'; Type = 'Text' }
@@ -197,6 +209,20 @@ $ConfigFields = @(
     @{ Name = 'OfferWindowDays';    Type = 'Number' }  # how far ahead a renewal opens
     @{ Name = 'OwnerSLADays';       Type = 'Number' }  # silence past this = escalate
     @{ Name = 'MTMFee';             Type = 'Number' }
+    # Months (1-12, comma separated) you WANT leases to expire in. The third
+    # offer's term is sized so the next expiration lands in one of these, which
+    # is how expirations get steered into peak leasing season over time.
+    # Standing notes that ride along with an owner or a property and show on
+    # every renewal for them -- "always call before sending", "wants 2% max".
+    # Carried over from the old NS_Renewal_Settings.Notes field.
+    @{ Name = 'StandingNotes';      Type = 'Note' }
+    # 'Property' | 'Owner' | 'Default' -- what the Title refers to. Owner rows
+    # carry notes only; policy is resolved per property.
+    @{ Name = 'Scope';              Type = 'Text' }
+    @{ Name = 'PeakMonths';         Type = 'Text' }
+    # Shorter term than 12mo costs the resident more; longer earns a discount.
+    @{ Name = 'ShortTermPremium';   Type = 'Number' }
+    @{ Name = 'LongTermDiscount';   Type = 'Number' }
     @{ Name = 'ConfigNotes';        Type = 'Note' }
 )
 
@@ -206,7 +232,7 @@ $Lists = @(
     @{ Name = 'NS_Renewal_Pipeline'; Fields = $PipelineFields
        Desc = 'Renewal rate decisions: owner negotiation and approval. Written by the Renewal Manager app.' }
     @{ Name = 'NS_Renewal_Config';   Fields = $ConfigFields
-       Desc = 'Per-property renewal policy. One row per property plus a __default__ row.' }
+       Desc = 'Renewal policy per property, plus standing notes per property or owner. One __default__ row supplies the fallback policy.' }
 )
 
 # ---------------------------------------------------------------------------
@@ -302,12 +328,16 @@ if (-not $defaultRow) {
     if ($PSCmdlet.ShouldProcess('NS_Renewal_Config.__default__', 'Seed default policy row')) {
         Add-PnPListItem -List 'NS_Renewal_Config' -Values @{
             Title              = '__default__'
+            Scope              = 'Default'
             TargetIncreasePct  = 3.0
             MinIncreasePct     = 0.0
             MaxIncreasePct     = 10.0
             OfferWindowDays    = 75
             OwnerSLADays       = 5
             MTMFee             = 100
+            PeakMonths         = '5,6,7,8'
+            ShortTermPremium   = 50
+            LongTermDiscount   = 25
             ConfigNotes        = 'Fallback policy. Any property without its own row uses these values.'
         } | Out-Null
         Write-Host "Seeded NS_Renewal_Config.__default__" -ForegroundColor Green

@@ -74,6 +74,58 @@ Approved to Send ───── PM sends the offer in AppFolio, marks it sent h
       Sent ─────────── AppFolio flips to Renewed → the row closes itself
 ```
 
+### Up to three offers per renewal
+
+The resident is given a choice of terms, and the slate is stored as
+`OffersJSON` on the pipeline row:
+
+| Term | Rate |
+|---|---|
+| **9 months** | 12-month rate **+ the short-term premium** |
+| **12 months** | the policy target — the headline everything scalar keys off |
+| **a peak-season term** | sized so the *next* expiration lands in peak leasing season |
+
+That third term is the lever. A lease expiring in December renews into December
+every year forever; offering, say, a 7-month term once moves it onto a June
+expiry permanently. `peakTerm()` searches 6–24 months for the option closest to
+12 whose end month falls in `PeakMonths`, and returns nothing when a fixed term
+already lands in peak (no point offering a third) or when the candidate sits
+within a month of 9 or 12 — an 8-month beside a 9-month is noise, not a choice.
+On the current portfolio, 36 of 183 open renewals get one.
+
+Pricing scales with distance from the 12-month standard rather than a flat
+adjustment, so no two terms can come out at the same rent — which would make the
+shorter of the pair strictly worse and therefore pointless.
+
+**MTM-only** replaces the slate entirely with a single month-to-month rate
+(current rent + the MTM fee) for units that shouldn't be tied up: owner selling,
+unit needing work, resident whose record doesn't warrant a term.
+
+**The displayed rate and the approved rate are the same number, always.** A
+saved slate is the negotiated truth and wins; where there is no saved slate but
+a scalar was stored, the headline is restated to match it. An earlier version
+let these diverge and the board showed $1,360 while the button approved $1,300.
+
+### Notes
+
+Two levels, both carried over from the old app:
+
+- **Standing notes** on an owner or a property (`NS_Renewal_Config.StandingNotes`)
+  — shown on every renewal for them. This is the old `NS_Renewal_Settings.Notes`
+  banner; `scripts/migrate-notes.ps1` copies them across.
+- **Unit notes** (`NS_Renewal_Pipeline.Notes`) — what the PM knows about this
+  specific unit. This is the line that appears under the unit in the owner
+  brief. The brief used to auto-fill its Notes from the risk flags, which meant
+  every owner email said the same generic things and nothing anyone actually
+  knew.
+
+### Overriding the owner step
+
+Approvers can push a renewal straight to *Ready to send* without the owner
+round, for deadline pressure or an unreachable owner. It demands a written
+reason, records `OwnerOutcome = Bypassed`, and badges the row **owner skipped** —
+a rate that never reached the owner must never look like one the owner approved.
+
 The app **does not send email**. Owner outreach happens in Outlook as it always
 has; the app records that it happened and what came back. "Copy owner brief" puts
 a formatted summary of all that owner's expiring units on the clipboard to paste
@@ -158,7 +210,11 @@ success. That bug shipped in the CAHP hub's Graph client and looks exactly like
 
 ### `NS_Renewal_Units` — machine-owned
 Written nightly by `renewals_feed.py`. **Hand edits survive until 4 AM and then
-vanish without a trace.** One row per occupied unit. Carries the AppFolio
+vanish without a trace.** One row per unit under management — including vacant
+ones, flagged `IsOccupied = false`. Vacants carry no renewal, but they are the
+denominator for the occupancy figure on each owner card; dropping them would
+erase the 16 properties that are currently 100% vacant and silently inflate
+every owner's occupancy. Carries the AppFolio
 renewal status, lease dates, rents, and the negotiation context the PM argues
 the owner's case with (past due, late count, NSF, tenure, market rent).
 
@@ -216,10 +272,16 @@ fallback should catch it, but don't rely on it.
    3%, window 75 days, owner SLA 5 days). Add per-property overrides where they
    differ.
 
-5. **Run both apps in parallel for a few days** and compare. The old app still
+5. **Carry the old notes across** (only needed once):
+   ```powershell
+   pwsh -File .\scripts\migrate-notes.ps1 -WhatIf   # preview
+   pwsh -File .\scripts\migrate-notes.ps1
+   ```
+
+6. **Run both apps in parallel for a few days** and compare. The old app still
    reads `NS_Units_Cache`, which is untouched by any of this.
 
-6. **Then retire the old path:**
+7. **Then retire the old path:**
    - Turn off the Power Automate flow **`AF_Sync_LeaseData`**.
    - The lists `NS_Units_Cache`, `NS_Renewal_Decisions` and
      `NS_Renewal_Settings` become read-only history. Keep them until you're
@@ -245,10 +307,18 @@ scratchpad/runner.py          serves it, runs headless Edge, collects results
 scratchpad/test_reconcile.py  reconcile/diff planning, no Graph calls
 ```
 
-69 assertions cover the date maths, the policy band, the model merge, scope
-filtering, stage transitions, and — most importantly — that `Renewed`,
-`Notice Given`, evicting and out-of-window units never appear as open work, and
-that `autoClose()` retires exactly the rows it should and no others.
+184 assertions cover the date and month arithmetic, the policy band, the offer
+slate (including that no two terms land within a month or at the same price),
+the peak-season term across every expiry month, MTM-only, occupancy, the PM and
+urgency filters, the approver override, the owner brief, scope filtering and
+stage transitions — and, most importantly, that `Renewed`, `Notice Given`,
+evicting, vacant and out-of-window units never appear as open work, and that
+`autoClose()` retires exactly the rows it should and no others.
+
+Several real bugs were caught this way and are locked in by regression tests: a
+missing `safeJSON` that broke the board for any unit with a saved slate, an
+order-dependent field comparison, a search box that lost focus every keystroke,
+the displayed-vs-approved rate mismatch, and duplicate offer terms.
 
 These live in the scratchpad rather than the repo because the fixture is a real
 AppFolio export containing resident names. **This repo is public — the fixture
