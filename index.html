@@ -179,6 +179,10 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--m);f
 .rent-in.dirty{border-color:var(--gold);background:#FFFDF6}
 .delta{font-size:10.5px;font-weight:600;font-family:var(--m)}
 .rowsub.offers{color:var(--g4);font-family:var(--m);font-size:10px;margin-top:2px}
+.askcell{display:inline-block;text-align:right}
+.askcell.ed{cursor:pointer;border-radius:5px;padding:2px 6px;margin:-2px -6px;
+  border:1px dashed transparent;transition:all .12s}
+.askcell.ed:hover{border-color:var(--gold);background:var(--gold-lt)}
 .unitnote{display:flex;align-items:baseline;gap:6px;margin-top:4px;max-width:290px}
 .unitnote .untxt{font-size:11px;color:#7A5C1E;background:var(--gold-lt);border-radius:4px;padding:1px 6px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
@@ -435,7 +439,7 @@ const S = {
   filters:{ q:"", stage:"", portfolio:"", property:"", manager:"", urgency:"" },
   collapsed:{},                // ownerName -> true
   syncedAt:null,
-  showChart:false,
+  showChart:true,
   busy:false
 };
 
@@ -447,7 +451,9 @@ async function boot(){
   document.getElementById("app-wrap").classList.add("on");
   try{ S.tab = sessionStorage.getItem("rn_tab") || "board"; }catch(e){}
   try{ S.scope = sessionStorage.getItem("rn_scope") || "mine"; }catch(e){}
-  try{ S.showChart = sessionStorage.getItem("rn_chart") === "1"; }catch(e){}
+  /* Only an explicit collapse is remembered -- absent any preference the chart
+     is shown, because a chart nobody can find is the same as no chart. */
+  try{ S.showChart = sessionStorage.getItem("rn_chart") !== "0"; }catch(e){}
   await refreshAll();
 }
 
@@ -1272,17 +1278,23 @@ async function saveUnitNote(uid){
 function askCell(r){
   const o = r.headline;
   if(!o && !r.askRent) return "—";
+  /* The rates are the thing a PM comes here to set, so the number itself is a
+     way in -- not just the button at the far end of the row. */
+  const editable = r.stage === "Needs Rate" || r.stage === "With Owner";
   const head = o ? o.rent : r.askRent;
   /* Compare by term, not object identity: the headline may be a restated copy
      of an offer rather than the same object, which would list it twice. */
   const others = r.offers.filter(x=>x.months !== o.months);
-  return `<b>${money(head)}</b>`
+  const open = editable ? ` onclick="event.stopPropagation();openTakeToOwner('${jsq(r.uid)}')"` : "";
+  return `<div class="askcell${editable?" ed":""}"${open}${editable?' title="Click to set the rates for each term"':""}>`
+    + `<b>${money(head)}</b>`
     + `<span class="rowsub">${o?termLabel(o)+" · ":""}${deltaLabel(r.currentRent, head)}</span>`
     + (others.length
         ? `<span class="rowsub offers">${others.map(x=>
             `${termLabel(x,true)} ${money(x.rent)}${x.peak?' <span class="peak" title="Ends in peak leasing season">★</span>':''}`
           ).join(" · ")}</span>`
-        : "");
+        : "")
+    + `</div>`;
 }
 
 /* months === 0 means month-to-month, not a zero-month lease. */
@@ -1323,7 +1335,7 @@ function nextStep(r){
   switch(r.stage){
     case "Needs Rate":
       return `<div class="btnrow">
-        <button class="btn pri sm" onclick="openTakeToOwner('${jsq(r.uid)}')">Take to owner →</button>
+        <button class="btn pri sm" onclick="openTakeToOwner('${jsq(r.uid)}')">${r.p?.OffersJSON ? "Edit rates" : "Set rates"} →</button>
         ${canApprove ? `<button class="btn sm ovr" title="Approve without the owner step"
             onclick="openOverride('${jsq(r.uid)}')">Skip owner</button>` : ""}
         <button class="btn sm dgr" onclick="openNonRenew('${jsq(r.uid)}')">Non-renew</button>
@@ -1751,7 +1763,7 @@ function openTakeToOwner(uid){
   _modalOffers = r.offers.map(o=>({...o}));
 
   openModal({
-    title:"Take these rates to the owner",
+    title:"Set the rates for this renewal",
     sub:`${r.property} · ${r.unitLabel}`,
     body:`
       <div class="ctx">
@@ -1780,8 +1792,8 @@ function openTakeToOwner(uid){
         <div class="fhint" id="m-offers-hint">${offerHint(r)}</div>
       </div>
 
-      <div class="fld">
-        <label>Date you contacted the owner</label>
+      <div class="fld" style="border-top:1px solid var(--g1);padding-top:13px">
+        <label>Date you contacted the owner <span style="font-weight:400;text-transform:none;color:var(--g4)">— only if you're sending these now</span></label>
         <input type="date" id="m-contacted" value="${todayStr()}">
         <div class="fhint">${emails.length
           ? `Owner email on file: <b>${esc_(emails.join(", "))}</b>. Send from Outlook as usual —
@@ -1794,7 +1806,10 @@ function openTakeToOwner(uid){
         <div class="fhint">This is the line that appears under this unit in the owner brief.</div>
       </div>`,
     actions:`<button class="btn" onclick="closeModal()">Cancel</button>
-             <button class="btn pri" onclick="doTakeToOwner('${jsq(uid)}')">Mark as with owner</button>`
+             <button class="btn" onclick="doTakeToOwner('${jsq(uid)}', false)"
+               title="Save these rates and come back to it">Save rates</button>
+             <button class="btn pri" onclick="doTakeToOwner('${jsq(uid)}', true)"
+               title="Save and record that these went to the owner">Save &amp; send to owner →</button>`
   });
 }
 
@@ -1852,7 +1867,7 @@ function toggleMTMOnly(uid, on){
   if(lbl) lbl.textContent = on ? "Month-to-month rate" : "Rates you're proposing";
 }
 
-async function doTakeToOwner(uid){
+async function doTakeToOwner(uid, sendToOwner){
   const r = byUid(uid); if(!r) return;
   const mtmOnly = !!document.getElementById("m-mtmonly")?.checked;
   const offers = _modalOffers.filter(o=>o.rent > 0);
@@ -1866,17 +1881,25 @@ async function doTakeToOwner(uid){
 
   closeModal();
   await withBusy("Saving…", async ()=>{
-    await savePipe(r, {
-      Stage:"With Owner",
+    const fields = {
       OffersJSON: JSON.stringify(offers),
       IsMTMOnly: mtmOnly,
       ProposedRent: head.rent, ProposedTermMonths: head.months,
       ProposedBy:S.me.name, ProposedOn:todayStr(),
-      OwnerContactedOn:contacted, Notes:notes,
+      Notes:notes,
       CurrentRentSnapshot:r.currentRent
-    });
+    };
+    /* Saving rates and telling the app you've contacted the owner are two
+       different claims. Only the second one moves the renewal along. */
+    if(sendToOwner){
+      fields.Stage = "With Owner";
+      fields.OwnerContactedOn = contacted;
+    }
+    await savePipe(r, fields);
     await reload();
-    toast(`${r.unitLabel} is with ${r.owner} — ${offers.length} option${offers.length>1?"s":""}.`);
+    toast(sendToOwner
+      ? `${r.unitLabel} is with ${r.owner} — ${offers.length} option${offers.length>1?"s":""}.`
+      : `Rates saved for ${r.unitLabel} — ${offers.length} option${offers.length>1?"s":""}. Not sent yet.`);
   });
 }
 
