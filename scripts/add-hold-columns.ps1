@@ -1,3 +1,9 @@
+# SUPERSEDED - September 2026.
+# This provisions OnHold/HoldReason columns on NS_Renewal_Decisions, a list the
+# rewritten app no longer uses. The current schema is created by
+# provision-renewal-lists.ps1. Kept only for reference; running it does nothing
+# useful. See docs/renewals-architecture.md.
+
 <#
 .SYNOPSIS
   Adds the two "On Hold" columns to the existing NS_Renewal_Decisions list

@@ -1,3 +1,9 @@
+> **SUPERSEDED — September 2026.** This documents how to patch the Power Automate
+> flow `AF_Sync_LeaseData`. That flow is being retired, not patched: the nightly
+> AppFolio ETL now writes `NS_Renewal_Units` directly and reconciles deletes.
+> See [renewals-architecture.md](renewals-architecture.md). Kept for history and
+> because the root-cause analysis below still explains the old data.
+
 # Fixing moved-out residents in NS_Units_Cache
 
 ## Root cause
