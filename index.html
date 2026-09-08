@@ -232,9 +232,16 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--m);f
 .charttitle{font-size:13px;font-weight:700;margin-bottom:3px}
 .chartsub{font-size:11.5px;color:var(--g4);margin-bottom:14px}
 .bars{display:flex;align-items:flex-end;gap:5px;height:132px;padding-bottom:2px}
-.barcol{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;min-width:0}
-.bar{width:100%;border-radius:4px 4px 0 0;min-height:2px;transition:opacity .13s;cursor:default}
-.bar:hover{opacity:.78}
+.barcol{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;min-width:0;
+  border-radius:5px 5px 0 0;padding:2px 1px 0}
+.barcol.pk{background:rgba(205,160,75,.13)}
+.barpair{display:flex;align-items:flex-end;justify-content:center;gap:2px;width:100%;height:100%}
+.bar{flex:1;min-width:3px;border-radius:3px 3px 0 0;transition:opacity .13s;cursor:default}
+.bar.sel{background:var(--hdr)}
+.bar.co{background:var(--g2)}
+.bar.hv{background:var(--er)}
+.barcol:hover .bar{opacity:.78}
+.dot.pkdot{background:rgba(205,160,75,.35);border:1px solid var(--gold)}
 .barn{font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--g6)}
 .barl{font-size:9.5px;color:var(--g4);white-space:nowrap;text-align:center;line-height:1.25}
 .barl.pk{color:var(--gold-dk);font-weight:600}
@@ -436,7 +443,7 @@ const S = {
   ownerStats:{},               // owner -> {total, occupied} across the whole portfolio
   tab:"board",
   scope:"mine",                // 'mine' | 'all'
-  filters:{ q:"", stage:"", portfolio:"", property:"", manager:"", urgency:"" },
+  filters:{ q:"", stage:"", portfolio:"", owner:"", manager:"", urgency:"" },
   collapsed:{},                // ownerName -> true
   syncedAt:null,
   showChart:true,
@@ -860,7 +867,7 @@ function matchFilters(r){
   const f = S.filters;
   if(f.stage && r.stage !== f.stage) return false;
   if(f.portfolio && r.portfolio !== f.portfolio) return false;
-  if(f.property && r.property !== f.property) return false;
+  if(f.owner && r.owner !== f.owner) return false;
   if(f.manager && r.manager !== f.manager) return false;
   if(f.urgency){
     const d = r.daysToDeadline;
@@ -970,9 +977,11 @@ function renderFatal(e){
 
 /* ── FILTER BAR (shared) ───────────────────────────────── */
 function filterBar(opts={}){
-  const props = [...new Set(S.renewals.filter(inScope)
+  /* Owners visible under the current scope and PM choice, so picking one can
+     never produce an empty board. */
+  const owners = [...new Set(S.renewals.filter(inScope)
     .filter(r=>!S.filters.manager || r.manager===S.filters.manager)
-    .map(r=>r.property))].sort();
+    .map(r=>r.owner).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
   const scopeSeg = S.me.managerName ? `
     <div class="seg">
       <button class="${S.scope==="mine"?"on":""}" onclick="setScope('mine')">My properties</button>
@@ -1002,9 +1011,9 @@ function filterBar(opts={}){
       ${[...new Set(S.renewals.map(r=>r.manager).filter(Boolean))].sort()
         .map(m=>`<option ${S.filters.manager===m?"selected":""}>${esc_(m)}</option>`).join("")}
     </select>
-    <select class="fsel" onchange="setFilter('property',this.value)">
-      <option value="">All properties</option>
-      ${props.map(p=>`<option ${S.filters.property===p?"selected":""}>${esc_(p)}</option>`).join("")}
+    <select class="fsel" onchange="setFilter('owner',this.value)" title="Owner — who the renewal is negotiated with">
+      <option value="">All owners</option>
+      ${owners.map(o=>`<option ${S.filters.owner===o?"selected":""}>${esc_(o)}</option>`).join("")}
     </select>
     ${opts.right||""}
   </div>`;
@@ -1015,7 +1024,7 @@ function setFilter(k,v){ S.filters[k]=v; render(); }
    My-properties scope on would guarantee an empty board for anyone but you. */
 function setManagerFilter(v){
   S.filters.manager = v;
-  S.filters.property = "";          // the old property may not be theirs
+  S.filters.owner = "";             // the chosen owner may not be theirs
   if(v) S.scope = "all";
   try{ sessionStorage.setItem("rn_scope", S.scope); }catch(e){}
   render();
@@ -1067,8 +1076,10 @@ function renderBoard(){
       <button class="exptoggle" onclick="toggleExposure()">
         ${S.showChart ? "▾" : "▸"} Exposure — next 18 months
       </button>
-      ${S.showChart ? exposureChart(S.renewals.filter(inScope).filter(r=>r.isOccupied),
-                                    "Lease expirations — next 18 months") : ""}
+      ${S.showChart ? exposureChart(
+            S.renewals.filter(inScope).filter(matchFilters).filter(r=>r.isOccupied),
+            "Lease expirations — next 18 months",
+            S.renewals.filter(r=>r.isOccupied)) : ""}
     </div>
     ${owners.length ? owners.map(o=>ownerCard(o, groups[o])).join("") : emptyBoard(all.length)}
   `;
@@ -1091,7 +1102,7 @@ function toggleExposure(){
   render();
 }
 
-function clearFilters(){ S.filters={q:"",stage:"",portfolio:"",property:"",manager:"",urgency:""}; render(); }
+function clearFilters(){ S.filters={q:"",stage:"",portfolio:"",owner:"",manager:"",urgency:""}; render(); }
 
 function ownerCard(owner, rows){
   const collapsed = !!S.collapsed[owner];
@@ -1490,7 +1501,10 @@ function renderPortfolio(){
   const vacant = all.length - scoped.length;
   const occPct = all.length ? (scoped.length/all.length*100) : 0;
 
-  const chart = exposureChart(scoped, "Lease expirations — next 18 months");
+  const chart = exposureChart(
+    rows.filter(r=>r.isOccupied),
+    "Lease expirations — next 18 months",
+    S.renewals.filter(r=>r.isOccupied));
 
   document.getElementById("pane-portfolio").innerHTML = `
     <div class="phead"><div>
@@ -1550,9 +1564,11 @@ function renderPortfolio(){
    want them. */
 function mtmCount(rows){ return rows.filter(r=>r.isMTM || !r.leaseEnd).length; }
 
-function exposureChart(rows, title){
+function exposureChart(rows, title, companyRows){
   const MONTHS = 18;
-  const pol = policyFor(S.filters.property || "");
+  /* Portfolio-level view, so the peak months come from the default policy
+     rather than any one property's override. */
+  const pol = policyFor("");
   const peak = new Set(pol.PeakMonths || []);
 
   const buckets = [];
@@ -1572,21 +1588,40 @@ function exposureChart(rows, title){
     buckets[i].n++;
   });
 
+  /* Second series only when the selection is genuinely narrower than the
+     company -- two identical bars side by side would be noise. */
+  const compare = Array.isArray(companyRows) && companyRows.length > rows.length;
+  if(compare){
+    companyRows.forEach(r=>{
+      if(r.isMTM || !r.leaseEnd) return;
+      const i = idx[r.leaseEnd.slice(0,7)];
+      if(i!==undefined) buckets[i].c = (buckets[i].c||0) + 1;
+    });
+  }
+  buckets.forEach(b=>{ if(b.c===undefined) b.c = 0; });
+
   const dated = rows.length - mtm;
   const avg = dated ? dated/MONTHS : 0;
-  const max = Math.max(1, ...buckets.map(b=>b.n));
+  /* Both series share one scale or the comparison lies. */
+  const max = Math.max(1, ...buckets.map(b=>Math.max(b.n, compare ? b.c : 0)));
+  const companyDated = compare ? buckets.reduce((a,b)=>a+b.c, 0) : 0;
 
+  /* Colour now carries the SERIES, so peak months are marked by tinting the
+     whole column and bolding its label instead of recolouring the bar. */
   const bars = buckets.map(b=>{
     const isPeak = peak.has(b.m);
     const heavy  = avg && b.n > avg*1.5;
-    const colour = heavy ? "var(--er)" : isPeak ? "var(--gold)" : "var(--inf)";
     const t = `${MONTH_ABBR[b.m-1]} ${b.y}: ${b.n} lease${b.n===1?"":"s"} expiring`
+            + (compare ? ` · company-wide ${b.c}` : "")
             + (isPeak ? " · peak leasing season" : "")
-            + (heavy ? " · heavy month" : "");
-    return `<div class="barcol">
+            + (heavy ? " · heavy month for this selection" : "");
+    const sel = `<div class="bar sel${heavy?" hv":""}"
+        style="height:${Math.max(b.n?2:0, b.n/max*96)}px"></div>`;
+    const co  = compare ? `<div class="bar co"
+        style="height:${Math.max(b.c?2:0, b.c/max*96)}px"></div>` : "";
+    return `<div class="barcol${isPeak?" pk":""}" title="${esc_(t)}">
       <div class="barn">${b.n||""}</div>
-      <div class="bar${isPeak?" pk":""}" style="height:${Math.max(2, b.n/max*96)}px;background:${colour}"
-           title="${esc_(t)}"></div>
+      <div class="barpair">${sel}${co}</div>
       <div class="barl${isPeak?" pk":""}">${MONTH_ABBR[b.m-1]}${b.m===1?"<br>"+String(b.y).slice(2):""}</div>
     </div>`;
   }).join("");
@@ -1596,13 +1631,15 @@ function exposureChart(rows, title){
     <div class="chartsub">
       ${dated} dated lease${dated===1?"":"s"} · ${mtm} month-to-month
       ${beyond?` · ${beyond} beyond 18 months`:""}
+      ${compare?` · shown against ${companyDated} company-wide`:""}
       · peak season ${monthNames(pol.PeakMonths)}
     </div>
     <div class="bars">${bars}</div>
     <div class="legend">
-      <div class="leg"><div class="dot" style="background:var(--gold)"></div>Peak leasing season — where you want expirations</div>
-      <div class="leg"><div class="dot" style="background:var(--inf)"></div>Off-peak</div>
-      <div class="leg"><div class="dot" style="background:var(--er)"></div>Heavy — 50%+ above average</div>
+      <div class="leg"><div class="dot" style="background:var(--hdr)"></div>${compare?"This selection":"Expirations"}</div>
+      ${compare?`<div class="leg"><div class="dot" style="background:var(--g2)"></div>Company-wide</div>`:""}
+      <div class="leg"><div class="dot pkdot"></div>Peak leasing season — where you want expirations</div>
+      <div class="leg"><div class="dot" style="background:var(--er)"></div>Heavy — 50%+ above average for this selection</div>
     </div>
   </div>`;
 }

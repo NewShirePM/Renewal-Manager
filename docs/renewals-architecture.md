@@ -119,6 +119,22 @@ Two levels, both carried over from the old app:
   every owner email said the same generic things and nothing anyone actually
   knew.
 
+### Filtering and the exposure chart
+
+The board filters by **owner**, not property. The board is grouped by owner, the
+owner is who the renewal is negotiated with, and the property list was 174 flat
+single-family addresses against 18 owners — not a thing anyone scans. Free-text
+search still matches property names.
+
+The 18-month exposure chart draws **two series whenever a filter is on**: the
+current selection in dark teal against the whole company in grey, on a shared
+scale. Without that you can see your own December cliff but not whether it is
+yours or everyone's. With no filter applied the second series is suppressed —
+two identical bars side by side are noise.
+
+Because colour now carries the series, peak months are marked by tinting the
+whole column and bolding its label rather than recolouring the bar.
+
 ### Overriding the owner step
 
 Approvers can push a renewal straight to *Ready to send* without the owner
